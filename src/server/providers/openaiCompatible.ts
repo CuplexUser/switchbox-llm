@@ -7,11 +7,31 @@ import {
   providerFetch,
   type ChatEvent,
   type ChatRequest,
+  type LoopMessage,
   type Provider,
+  type ToolCall,
 } from './types.ts';
 
+interface ToolCallDelta {
+  index?: number;
+  id?: string;
+  function?: { name?: string; arguments?: string };
+}
+
+interface Annotation {
+  type?: string;
+  url_citation?: { url?: string; title?: string };
+}
+
 interface ChunkChoice {
-  delta?: { content?: string | null; reasoning?: string | null; reasoning_content?: string | null };
+  delta?: {
+    content?: string | null;
+    reasoning?: string | null;
+    reasoning_content?: string | null;
+    tool_calls?: ToolCallDelta[];
+    annotations?: Annotation[];
+  };
+  message?: { annotations?: Annotation[] };
   finish_reason?: string | null;
 }
 
@@ -21,13 +41,31 @@ export interface OpenAiChunk {
   error?: { message?: string };
 }
 
-export function mapOpenAiChunk(chunk: OpenAiChunk): ChatEvent[] {
+/** Maps one streamed chunk. Tool-call fragments are merged into `pending` and emitted when the stream ends. */
+export function mapOpenAiChunk(chunk: OpenAiChunk, pending: Map<number, ToolCall> = new Map()): ChatEvent[] {
   if (chunk.error) throw new ProviderError(chunk.error.message ?? 'The provider reported an error mid-stream');
   const events: ChatEvent[] = [];
   const choice = chunk.choices?.[0];
   const reasoning = choice?.delta?.reasoning ?? choice?.delta?.reasoning_content;
   if (reasoning) events.push({ type: 'reasoning', text: reasoning });
   if (choice?.delta?.content) events.push({ type: 'text', text: choice.delta.content });
+
+  for (const fragment of choice?.delta?.tool_calls ?? []) {
+    const index = fragment.index ?? 0;
+    const call = pending.get(index) ?? { id: '', name: '', arguments: '' };
+    if (fragment.id) call.id = fragment.id;
+    if (fragment.function?.name) call.name += fragment.function.name;
+    if (fragment.function?.arguments) call.arguments += fragment.function.arguments;
+    pending.set(index, call);
+  }
+
+  for (const annotation of [...(choice?.delta?.annotations ?? []), ...(choice?.message?.annotations ?? [])]) {
+    const citation = annotation.url_citation;
+    if (annotation.type === 'url_citation' && citation?.url) {
+      events.push({ type: 'source', url: citation.url, title: citation.title || citation.url });
+    }
+  }
+
   if (choice?.finish_reason) events.push({ type: 'finish', reason: choice.finish_reason });
   if (chunk.usage) {
     events.push({
@@ -40,6 +78,28 @@ export function mapOpenAiChunk(chunk: OpenAiChunk): ChatEvent[] {
   return events;
 }
 
+export function toOpenAiMessages(system: string, messages: LoopMessage[]): Record<string, unknown>[] {
+  const out: Record<string, unknown>[] = system ? [{ role: 'system', content: system }] : [];
+  for (const message of messages) {
+    if (message.role === 'tool') {
+      out.push({ role: 'tool', tool_call_id: message.toolCallId, content: message.content });
+    } else if (message.role === 'assistant' && message.toolCalls?.length) {
+      out.push({
+        role: 'assistant',
+        content: message.content || null,
+        tool_calls: message.toolCalls.map((call) => ({
+          id: call.id,
+          type: 'function',
+          function: { name: call.name, arguments: call.arguments || '{}' },
+        })),
+      });
+    } else {
+      out.push({ role: message.role, content: message.content });
+    }
+  }
+  return out;
+}
+
 interface RawModel {
   id: string;
   name?: string;
@@ -47,7 +107,7 @@ interface RawModel {
   pricing?: { prompt?: string; completion?: string };
 }
 
-const NON_CHAT_MODEL = /embed|whisper|tts|dall-e|moderation|transcribe|audio|realtime|image|search|computer-use|babbage|davinci/i;
+const NON_CHAT_MODEL = /embed|whisper|tts|dall-e|moderation|transcribe|audio|realtime|image|computer-use|babbage|davinci/i;
 
 export function mapModels(provider: ProviderId, data: RawModel[]): ModelInfo[] {
   return data
@@ -107,13 +167,9 @@ export class OpenAiCompatibleProvider implements Provider {
   }
 
   async *streamChat(request: ChatRequest): AsyncIterable<ChatEvent> {
-    const messages = [
-      ...(request.system ? [{ role: 'system', content: request.system }] : []),
-      ...request.messages,
-    ];
     const body: Record<string, unknown> = {
       model: request.model,
-      messages,
+      messages: toOpenAiMessages(request.system, request.messages),
       stream: true,
       stream_options: { include_usage: true },
     };
@@ -122,6 +178,22 @@ export class OpenAiCompatibleProvider implements Provider {
     if (topP !== null) body.top_p = topP;
     // OpenAI's current models only accept max_completion_tokens; everything else still reads max_tokens.
     if (maxTokens !== null) body[this.id === 'openai' ? 'max_completion_tokens' : 'max_tokens'] = maxTokens;
+
+    if (request.tools?.length) {
+      body.tools = request.tools.map((tool) => ({
+        type: 'function',
+        function: { name: tool.name, description: tool.description, parameters: tool.parameters },
+      }));
+      body.tool_choice = 'auto';
+    }
+    if (request.nativeSearch) {
+      // OpenRouter's web plugin works with every model it proxies. OpenAI accepts
+      // web_search_options on any model but only acts on it with its search-enabled models.
+      if (this.id === 'openrouter') body.plugins = [{ id: 'web', max_results: 5 }];
+      if (this.id === 'openai') body.web_search_options = {};
+    }
+    // Makes OpenRouter report the real dollar cost of the call.
+    if (this.id === 'openrouter') body.usage = { include: true };
 
     const response = await providerFetch(this.label, joinUrl(this.baseUrl, 'chat/completions'), {
       method: 'POST',
@@ -132,6 +204,7 @@ export class OpenAiCompatibleProvider implements Provider {
     if (!response.ok) throw await errorFromResponse(this.label, response);
     if (!response.body) throw new ProviderError(`${this.label} returned an empty response`);
 
+    const pending = new Map<number, ToolCall>();
     for await (const message of parseSse(response.body, request.signal)) {
       if (message.data === '[DONE]') break;
       let chunk: OpenAiChunk;
@@ -140,7 +213,12 @@ export class OpenAiCompatibleProvider implements Provider {
       } catch {
         continue;
       }
-      yield* mapOpenAiChunk(chunk);
+      yield* mapOpenAiChunk(chunk, pending);
+    }
+
+    for (const [index, call] of [...pending.entries()].toSorted(([a], [b]) => a - b)) {
+      if (!call.name) continue;
+      yield { type: 'tool_call', call: { ...call, id: call.id || `call_${index}` } };
     }
   }
 }

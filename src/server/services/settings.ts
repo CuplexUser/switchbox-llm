@@ -28,7 +28,8 @@ export class SettingsService {
   async getAll(): Promise<AppSettings> {
     if (this.cache) return this.cache;
     const rows = await this.repos.settings.findMany();
-    const stored = Object.fromEntries(rows.map((row) => [row.id, row.value]));
+    // Other rows (such as seed markers) share the table but aren't settings sections.
+    const stored = Object.fromEntries(rows.filter((row) => row.id in DEFAULT_SETTINGS).map((row) => [row.id, row.value]));
     this.cache = mergeDefaults(DEFAULT_SETTINGS, stored);
     return this.cache;
   }

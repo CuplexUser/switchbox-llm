@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { ChatTurn, ConversationDetail, Message, StreamEvent } from '../../shared/types.ts';
+import type { ActivityItem, ChatTurn, ConversationDetail, Message, Source, StreamEvent } from '../../shared/types.ts';
 import { api } from '../api/client.ts';
 import { streamChat } from '../api/stream.ts';
 
@@ -9,6 +9,8 @@ export interface LiveReply {
   reasoning: string;
   startedAt: number;
   firstTokenAt: number | null;
+  activity: ActivityItem[];
+  sources: Source[];
 }
 
 export interface PaneRuntime {
@@ -78,7 +80,7 @@ export const useChatStore = create<ChatState>((set, get) => {
     for (const { paneId } of targets) {
       updatePane(conversationId, paneId, (pane) => ({
         ...pane,
-        live: { messageId: null, text: '', reasoning: '', startedAt: now, firstTokenAt: null },
+        live: { messageId: null, text: '', reasoning: '', startedAt: now, firstTokenAt: null, activity: [], sources: [] },
       }));
     }
 
@@ -134,6 +136,21 @@ export const useChatStore = create<ChatState>((set, get) => {
           break;
         case 'reasoning':
           queue(event.paneId, 'reasoning', event.text);
+          break;
+        case 'activity':
+          updatePane(conversationId, event.paneId, (pane) => {
+            if (!pane.live) return pane;
+            const exists = pane.live.activity.some((item) => item.id === event.item.id);
+            const activity = exists
+              ? pane.live.activity.map((item) => (item.id === event.item.id ? event.item : item))
+              : [...pane.live.activity, event.item];
+            return { ...pane, live: { ...pane.live, activity } };
+          });
+          break;
+        case 'source':
+          updatePane(conversationId, event.paneId, (pane) =>
+            pane.live ? { ...pane, live: { ...pane.live, sources: [...pane.live.sources, event.source] } } : pane,
+          );
           break;
         case 'done':
           finish(event.paneId, event.message);
@@ -255,6 +272,7 @@ function errorMessage(conversation: ConversationDetail, paneId: string, error: s
     cost: null,
     finishReason: null,
     error,
+    activity: null,
     createdAt: new Date().toISOString(),
   };
 }

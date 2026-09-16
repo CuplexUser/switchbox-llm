@@ -34,6 +34,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
     suggestionModel: null,
     maxInjected: 50,
   },
+  web: {
+    searchMode: 'auto',
+    useByDefault: true,
+    allowFetch: true,
+    maxResults: 5,
+    maxToolRounds: 6,
+  },
 };
 
 /** Layers generation params left to right; later non-null values win. */

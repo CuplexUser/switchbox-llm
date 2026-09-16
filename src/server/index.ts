@@ -5,8 +5,11 @@ import { Hono } from 'hono';
 import { createApi, createServices } from './app.ts';
 import { openRepos } from './db/repos.ts';
 import { config } from './env.ts';
+import { seedSamplePrompts } from './services/seed.ts';
 
 const repos = await openRepos(config.databaseFile);
+const seeded = await seedSamplePrompts(repos);
+if (seeded > 0) console.info(`[db] added ${seeded} starter system prompts`);
 
 // Temporary chats never outlive the server process.
 const temporary = await repos.conversations.findMany({ where: { persist: false } });

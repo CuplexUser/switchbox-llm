@@ -14,12 +14,14 @@ import type {
   ProviderStatus,
   SettingsSection,
   SystemPrompt,
+  WebStatus,
 } from '../../shared/types.ts';
 import { api } from './client.ts';
 
 export const keys = {
   settings: ['settings'] as const,
   providers: ['providers'] as const,
+  webStatus: ['web-status'] as const,
   models: ['models'] as const,
   prompts: ['prompts'] as const,
   conversations: ['conversations'] as const,
@@ -53,6 +55,7 @@ export function useUpdateSettings() {
     },
     onSuccess: (settings, { section }) => {
       client.setQueryData(keys.settings, settings);
+      if (section === 'web') void client.invalidateQueries({ queryKey: keys.webStatus });
       if (section === 'providers') {
         void client.invalidateQueries({ queryKey: keys.providers });
         void client.invalidateQueries({ queryKey: keys.models });
@@ -63,6 +66,10 @@ export function useUpdateSettings() {
 
 export function useProviders() {
   return useQuery({ queryKey: keys.providers, queryFn: () => api<ProviderStatus[]>('/providers') });
+}
+
+export function useWebStatus() {
+  return useQuery({ queryKey: keys.webStatus, queryFn: () => api<WebStatus>('/web/status') });
 }
 
 export function useTestProvider() {
@@ -149,6 +156,7 @@ export interface NewConversation {
   title?: string;
   persist?: boolean;
   useMemory?: boolean;
+  webAccess?: boolean;
   panes: (ModelRef & { systemPromptId?: string | null })[];
 }
 

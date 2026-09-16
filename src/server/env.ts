@@ -29,6 +29,13 @@ export function keyVarFor(provider: ProviderId): string | null {
   return KEY_VARS[provider] ?? null;
 }
 
+export function searchKeys(): { tavily: string | null; brave: string | null } {
+  return {
+    tavily: process.env.TAVILY_API_KEY?.trim() || null,
+    brave: process.env.BRAVE_API_KEY?.trim() || null,
+  };
+}
+
 export const config = {
   port: Number(process.env.PORT ?? 8787),
   databaseFile: process.env.DATABASE_FILE ?? './data/switchbox.db',

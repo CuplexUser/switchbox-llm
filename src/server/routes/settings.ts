@@ -3,6 +3,7 @@ import { DEFAULT_SETTINGS } from '../../shared/defaults.ts';
 import { PROVIDER_IDS, type AppSettings, type ModelInfo, type ProviderId, type SettingsSection } from '../../shared/types.ts';
 import { badRequest, readJson, type Services } from '../context.ts';
 import { errorMessage } from '../services/chat.ts';
+import { webStatus } from '../web/search.ts';
 
 const MODEL_CACHE_MS = 10 * 60 * 1000;
 
@@ -22,6 +23,8 @@ export function settingsRoutes({ settings, registry }: Services): Hono {
   });
 
   app.get('/providers', async (c) => c.json(await registry.statuses()));
+
+  app.get('/web/status', async (c) => c.json(webStatus((await settings.get('web')).searchMode)));
 
   app.post('/providers/:id/test', async (c) => {
     const id = c.req.param('id') as ProviderId;

@@ -22,6 +22,7 @@ export const conversationSchema = defineSchema({
   title: { type: 'string' },
   persist: { type: 'boolean' },
   useMemory: { type: 'boolean', column: 'use_memory' },
+  webAccess: { type: 'boolean', column: 'web_access' },
   pinned: { type: 'boolean' },
   archived: { type: 'boolean' },
   createdAt: { type: 'date', column: 'created_at' },
@@ -57,6 +58,7 @@ export const messageSchema = defineSchema({
   cost: { type: 'number', nullable: true },
   finishReason: { type: 'string', nullable: true, column: 'finish_reason' },
   error: { type: 'string', nullable: true },
+  activity: { type: 'json', nullable: true },
   createdAt: { type: 'date', column: 'created_at' },
 });
 

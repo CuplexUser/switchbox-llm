@@ -15,6 +15,7 @@ import { Markdown } from '../../components/Markdown.tsx';
 import { formatCost, formatMs, formatTokens, shortModel, tokensPerSecond } from '../../lib/format.ts';
 import type { LiveReply } from '../../stores/chat.ts';
 import { fonts } from '../../theme/theme.ts';
+import { WebActivity } from './WebActivity.tsx';
 
 const FINISH_NOTES: Record<string, string> = {
   aborted: 'Stopped',
@@ -133,6 +134,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   return (
     <Box sx={{ '&:hover .sb-actions, &:focus-within .sb-actions': { opacity: 1 } }}>
       {message.reasoning && <Reasoning text={message.reasoning} />}
+      {message.activity && <WebActivity items={message.activity.items} sources={message.activity.sources} />}
       {message.content && <Markdown text={message.content} />}
       {message.error && (
         <Alert severity="error" variant="outlined" sx={{ mt: message.content ? 1.5 : 0, fontSize: '0.8125rem' }}>
@@ -179,10 +181,11 @@ export const AssistantMessage = memo(function AssistantMessage({
 });
 
 export function LiveMessage({ live }: { live: LiveReply }) {
-  const waiting = !live.text && !live.reasoning;
+  const waiting = !live.text && !live.reasoning && live.activity.length === 0;
   return (
     <Box aria-live="polite" aria-busy="true">
       {live.reasoning && <Reasoning text={live.reasoning} live={!live.text} />}
+      <WebActivity items={live.activity} sources={live.sources} live />
       {waiting ? (
         <Box sx={{ display: 'flex', gap: 0.75, py: 1 }} aria-label="Waiting for the first token">
           {[0, 1, 2].map((index) => (

@@ -10,10 +10,12 @@ import { GenerationTab } from './GenerationTab.tsx';
 import { MemoryTab } from './MemoryTab.tsx';
 import { PromptsTab } from './PromptsTab.tsx';
 import { ProvidersTab } from './ProvidersTab.tsx';
+import { WebTab } from './WebTab.tsx';
 
 const TABS = [
   { id: 'general', label: 'General', element: <GeneralTab /> },
   { id: 'providers', label: 'Providers', element: <ProvidersTab /> },
+  { id: 'web', label: 'Web search', element: <WebTab /> },
   { id: 'generation', label: 'Generation', element: <GenerationTab /> },
   { id: 'prompts', label: 'System prompts', element: <PromptsTab /> },
   { id: 'memory', label: 'Memory', element: <MemoryTab /> },

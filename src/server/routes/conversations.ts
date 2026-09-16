@@ -83,9 +83,10 @@ export function conversationRoutes({ repos, settings, chat }: Services): Hono {
     if (panes.length > MAX_PANES) throw badRequest(`At most ${MAX_PANES} panes per conversation`);
     panes.forEach(validateModel);
 
-    const [general, memory, promptId] = await Promise.all([
+    const [general, memory, web, promptId] = await Promise.all([
       settings.get('general'),
       settings.get('memory'),
+      settings.get('web'),
       defaultPromptId(),
     ]);
 
@@ -94,6 +95,7 @@ export function conversationRoutes({ repos, settings, chat }: Services): Hono {
         title: body.title?.trim() || DEFAULT_TITLE,
         persist: body.persist ?? general.persistByDefault,
         useMemory: body.useMemory ?? memory.useByDefault,
+        webAccess: body.webAccess ?? web.useByDefault,
         pinned: false,
         archived: false,
       });
@@ -109,7 +111,7 @@ export function conversationRoutes({ repos, settings, chat }: Services): Hono {
     const id = c.req.param('id');
     await loadConversation(id);
     const body = await readJson<Partial<Conversation>>(c);
-    const row = await repos.conversations.update(id, pick(body, ['title', 'persist', 'useMemory', 'pinned', 'archived']));
+    const row = await repos.conversations.update(id, pick(body, ['title', 'persist', 'useMemory', 'webAccess', 'pinned', 'archived']));
     return c.json(await detail(row));
   });
 

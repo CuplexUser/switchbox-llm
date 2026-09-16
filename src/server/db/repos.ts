@@ -1,5 +1,6 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { addMissingColumns } from './migrate.ts';
 import { createRepo, type Repo } from 'repolayer';
 import { MemoryRepo, MemoryStore } from 'repolayer/memory';
 import {
@@ -30,6 +31,11 @@ export interface Repos {
 
 export async function openRepos(file: string): Promise<Repos> {
   mkdirSync(dirname(file), { recursive: true });
+  const added = addMissingColumns(file, [
+    { table: 'conversations', schema: conversationSchema, defaults: { web_access: '1' } },
+    { table: 'messages', schema: messageSchema },
+  ]);
+  if (added.length > 0) console.info(`[db] added columns: ${added.join(', ')}`);
   const base = { driver: 'sqlite', connection: { file, busyTimeoutMs: 5000 }, ensureTable: true } as const;
 
   const repos: Repos = {

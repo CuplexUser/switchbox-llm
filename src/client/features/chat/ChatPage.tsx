@@ -2,6 +2,7 @@ import AddRoundedIcon from '@mui/icons-material/AddRounded';
 import CheckRoundedIcon from '@mui/icons-material/CheckRounded';
 import HistoryToggleOffRoundedIcon from '@mui/icons-material/HistoryToggleOffRounded';
 import PsychologyAltOutlinedIcon from '@mui/icons-material/PsychologyAltOutlined';
+import PublicRoundedIcon from '@mui/icons-material/PublicRounded';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
@@ -222,6 +223,17 @@ function ChatView({ conversationId }: { conversationId: string }) {
             data.useMemory
               ? 'Saved memories are added to the system prompt. Click to turn off for this chat.'
               : 'Memories are not used in this chat. Click to turn on.'
+          }
+        />
+        <ToggleChip
+          on={data.webAccess}
+          onClick={() => updateConversation.mutate({ id: data.id, webAccess: !data.webAccess })}
+          icon={<PublicRoundedIcon sx={{ fontSize: 15 }} />}
+          label={narrow ? '' : data.webAccess ? 'Web on' : 'Web off'}
+          tooltip={
+            data.webAccess
+              ? 'Models can search the web and read pages. Click to turn off for this chat.'
+              : 'Models answer without web access. Click to turn on.'
           }
         />
         <Tooltip title={panes.length >= MAX_PANES ? `Up to ${MAX_PANES} models per chat` : 'Add a model to compare'}>

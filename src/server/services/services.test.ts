@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { DEFAULT_SETTINGS } from '../../shared/defaults.ts';
 import type { ModelInfo, ProviderId, StreamEvent } from '../../shared/types.ts';
 import { memoryRepos, type Repos } from '../db/repos.ts';
 import type { ProviderRegistry } from '../providers/registry.ts';
-import type { ChatEvent, ChatRequest, Provider } from '../providers/types.ts';
+import { ProviderError, type ChatEvent, type ChatRequest, type Provider } from '../providers/types.ts';
 import { ChatService, cleanHistory, titleFrom } from './chat.ts';
 import { buildSystemPrompt, MemoryService, parseSuggestions } from './memory.ts';
 import { mergeDefaults, SettingsService } from './settings.ts';
@@ -38,11 +39,12 @@ function setup(provider: Provider) {
   return { repos, settings, memory, chat };
 }
 
-async function seedConversation(repos: Repos, persist = true, useMemory = true) {
+async function seedConversation(repos: Repos, persist = true, useMemory = true, webAccess = false) {
   const conversation = await repos.conversations.create({
     title: 'New chat',
     persist,
     useMemory,
+    webAccess,
     pinned: false,
     archived: false,
   });
@@ -181,6 +183,97 @@ describe('ChatService', () => {
     );
     const done = events.find((event) => event.type === 'done');
     expect(done?.type === 'done' && done.message.finishReason).toBe('aborted');
+  });
+});
+
+async function runOnce(chat: ChatService, conversationId: string, paneId: string) {
+  const events: StreamEvent[] = [];
+  await chat.run(
+    { runId: 'r', conversationId, content: 'Weather in Oslo?', targets: [{ paneId, history: [] }] },
+    (event) => void events.push(event),
+    new Map(),
+  );
+  return events;
+}
+
+describe('ChatService web tools', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it('runs web_search through Tavily, feeds results back and records activity and sources', async () => {
+    vi.stubEnv('TAVILY_API_KEY', 'tvly-test');
+    vi.stubEnv('BRAVE_API_KEY', '');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>(async () =>
+        Response.json({ results: [{ title: 'Yr', url: 'https://yr.test/oslo', content: 'Sunny, 21 degrees' }] }),
+      ),
+    );
+    const provider = new FakeProvider((request) =>
+      request.messages.some((message) => message.role === 'tool')
+        ? [{ type: 'text', text: 'Sunny.' }]
+        : [
+            { type: 'text', text: 'Let me check.' },
+            { type: 'usage', inputTokens: 10, outputTokens: 3 },
+            { type: 'tool_call', call: { id: 'c1', name: 'web_search', arguments: '{"query":"Oslo weather"}' } },
+          ],
+    );
+    const { repos, chat } = setup(provider);
+    const { conversation, pane } = await seedConversation(repos, true, false, true);
+
+    const events = await runOnce(chat, conversation.id, pane.id);
+
+    expect(provider.requests).toHaveLength(2);
+    expect(provider.requests[0]?.tools?.map((tool) => tool.name)).toEqual(['web_search', 'web_fetch']);
+    expect(provider.requests[0]?.system).toContain("Today's date is");
+    const toolMessage = provider.requests[1]?.messages.find((message) => message.role === 'tool');
+    expect(toolMessage?.role === 'tool' && toolMessage.content).toContain('Sunny, 21 degrees');
+
+    const done = events.find((event) => event.type === 'done');
+    const message = done?.type === 'done' ? done.message : null;
+    expect(message?.content).toBe('Let me check.\n\nSunny.');
+    expect(message?.tokensIn).toBe(10);
+    expect(message?.activity?.items).toMatchObject([{ kind: 'search', engine: 'tavily', query: 'Oslo weather', resultCount: 1, done: true }]);
+    expect(message?.activity?.sources).toEqual([{ url: 'https://yr.test/oslo', title: 'Yr' }]);
+    expect(events.filter((event) => event.type === 'activity')).toHaveLength(2);
+
+    const stored = await repos.messages.findById(message?.id ?? '');
+    expect(stored?.activity).toEqual(message?.activity);
+  });
+
+  it('retries without tools when the model rejects them', async () => {
+    vi.stubEnv('TAVILY_API_KEY', '');
+    vi.stubEnv('BRAVE_API_KEY', '');
+    const provider = new FakeProvider((request) => {
+      if (request.tools?.length) throw new ProviderError('Ollama returned 400: model does not support tools', 400);
+      return [{ type: 'text', text: 'Offline answer.' }];
+    });
+    const { repos, chat } = setup(provider);
+    const { conversation, pane } = await seedConversation(repos, false, false, true);
+
+    const events = await runOnce(chat, conversation.id, pane.id);
+    const done = events.find((event) => event.type === 'done');
+    expect(done?.type === 'done' && done.message.content).toBe('Offline answer.');
+    expect(done?.type === 'done' && done.message.activity?.items.map((item) => item.kind)).toEqual(['notice']);
+  });
+
+  it('stops calling tools after the round limit and asks for an answer', async () => {
+    vi.stubEnv('TAVILY_API_KEY', '');
+    vi.stubEnv('BRAVE_API_KEY', '');
+    const provider = new FakeProvider(() => [
+      { type: 'tool_call', call: { id: `c${Math.random()}`, name: 'web_fetch', arguments: '{"url":"http://127.0.0.1/"}' } },
+    ]);
+    const { repos, settings, chat } = setup(provider);
+    await settings.set('web', { ...DEFAULT_SETTINGS.web, maxToolRounds: 2 });
+    const { conversation, pane } = await seedConversation(repos, false, false, true);
+
+    await runOnce(chat, conversation.id, pane.id);
+    // Two real rounds, one round answered with the limit notice, then a final turn that is cut off.
+    expect(provider.requests).toHaveLength(4);
+    const last = provider.requests.at(-1)?.messages.at(-1);
+    expect(last?.role === 'tool' && last.content).toContain('Research limit reached');
   });
 });
 

@@ -9,7 +9,10 @@ in parallel.
   single composer can target all panes or only some
 - **History:** messages are saved to SQLite through [repolayer](https://www.npmjs.com/package/repolayer). A
   chat can also be temporary, in which case nothing is written
-- **System prompts:** a reusable library with a default, plus custom instructions for each pane
+- **System prompts:** a reusable library with a default, plus custom instructions for each pane. Two
+  starter prompts ("General assistant" and "Research analyst") are added on first run
+- **Web search:** models can search the web and read pages, with Tavily, Brave, or the provider's own search.
+  Each reply shows what was searched and which sources were used
 - **Memory:** facts about you that are added to the system prompt. A model you choose can suggest new ones
   for you to keep or dismiss
 - **Stats:** time to first token, tokens per second, token counts, and cost where the provider reports it
@@ -35,6 +38,8 @@ API keys go in `.env` and stay on the local server:
 | `OPENAI_API_KEY` | OpenAI |
 | `ANTHROPIC_API_KEY` | Anthropic |
 | `CUSTOM_API_KEY` | Optional key for a custom OpenAI-compatible endpoint |
+| `TAVILY_API_KEY` | Web search through Tavily |
+| `BRAVE_API_KEY` | Web search through Brave Search |
 | `PORT` | API port, default `8787` |
 | `DATABASE_FILE` | SQLite file, default `./data/switchbox.db` |
 
@@ -44,6 +49,26 @@ after changing `.env`.
 
 For local models, start Ollama or LM Studio and turn the provider on under Settings → Providers. The model
 picker also accepts any model id typed directly, which helps when a server doesn't list its models.
+
+## Web search
+
+Choose how search runs under Settings → Web search. Each chat has its own Web on/off toggle.
+
+| Mode | How it works |
+| --- | --- |
+| `auto` (default) | Tavily if `TAVILY_API_KEY` is set, else Brave if `BRAVE_API_KEY` is set, else native |
+| `tavily` | A local `web_search` tool. Results come back as summarized passages, so models can often answer without opening every link |
+| `brave` | A local `web_search` tool with ordinary web results. Cheaper and more neutral, but models open more pages |
+| `native` | No local search tool. The model's provider searches on its servers: OpenRouter's web plugin, Anthropic's `web_search` server tool, or OpenAI's `web_search_options` (search-enabled models only). No extra key, but quality varies by provider, and Ollama, LM Studio and custom endpoints have none |
+| `none` | No web search |
+
+Separately, a `web_fetch` tool lets models read a page by URL; you can turn it off in the same settings tab. It
+refuses localhost and private-network addresses, including redirects and hostnames that resolve to them.
+
+With Tavily or Brave, the server runs a tool loop: the model calls a tool, the server runs it and sends back the
+result, and this repeats up to the "Tool rounds per reply" limit. After that, the model is asked to answer with
+what it has. Models that reject tool definitions, which is common with local models, automatically get a retry
+without web access.
 
 ## Production
 
@@ -82,7 +107,8 @@ src/
   shared/    Types, defaults and the SSE parser used by both sides
   server/    Hono API
     db/         repolayer schemas and repos (one table per repo)
-    providers/  OpenAI-compatible and Anthropic streaming adapters
+    providers/  OpenAI-compatible and Anthropic streaming adapters (tool calls, native search)
+    web/        Tavily and Brave search, safe page fetching, tool definitions
     services/   chat runs, prompt assembly, memory suggestions, settings
     routes/     REST endpoints and the /api/chat/stream SSE endpoint
   client/    React 19, MUI 9, TanStack Query, Zustand
@@ -95,7 +121,8 @@ event with its pane id. Every pane has its own abort controller, so `POST /api/c
 and leave the others running. Stopped replies keep their partial text.
 
 Tables are created on startup with repolayer's `ensureTable()`, and `verifyTable()` checks them against the
-schemas. Because repolayer is not a migration tool, changing a schema needs a manual migration or a fresh
-database file.
+schemas. repolayer doesn't do migrations. Instead, `src/server/db/migrate.ts` adds any column a newer schema
+declares to an existing database, using repolayer's own column DDL. Any other schema change needs a manual
+migration.
 
 Settings → Data exports and imports everything except API keys as JSON.

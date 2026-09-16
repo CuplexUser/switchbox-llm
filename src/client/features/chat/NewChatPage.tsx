@@ -56,6 +56,7 @@ function NewChatForm({ settings }: { settings: AppSettings }) {
   );
   const [persist, setPersist] = useState(settings.general.persistByDefault);
   const [useMemory, setUseMemory] = useState(settings.memory.useByDefault);
+  const [webAccess, setWebAccess] = useState(settings.web.useByDefault);
   const [promptId, setPromptId] = useState<string | null>(null);
   const [picker, setPicker] = useState<{ anchor: HTMLElement; slot: number } | null>(null);
 
@@ -78,6 +79,7 @@ function NewChatForm({ settings }: { settings: AppSettings }) {
       {
         persist,
         useMemory,
+        webAccess,
         panes: current.map((slot) => ({ ...slot, systemPromptId: effectivePromptId || null })),
       },
       {
@@ -228,6 +230,10 @@ function NewChatForm({ settings }: { settings: AppSettings }) {
           <FormControlLabel
             control={<Switch checked={useMemory} onChange={(event) => setUseMemory(event.target.checked)} />}
             label={<Typography variant="body2">Use memory</Typography>}
+          />
+          <FormControlLabel
+            control={<Switch checked={webAccess} onChange={(event) => setWebAccess(event.target.checked)} />}
+            label={<Typography variant="body2">Web access</Typography>}
           />
           <Box sx={{ flex: 1 }} />
           {current.length > 0 && !isDefaultSet && (
