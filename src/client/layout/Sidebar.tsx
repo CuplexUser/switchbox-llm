@@ -10,6 +10,7 @@ import PushPinOutlinedIcon from '@mui/icons-material/PushPinOutlined';
 import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
 import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
 import AddRoundedIcon from '@mui/icons-material/AddRounded';
+import BarChartRoundedIcon from '@mui/icons-material/BarChartRounded';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import IconButton from '@mui/material/IconButton';
@@ -386,6 +387,7 @@ export function Sidebar({ onCollapse, onOpenPalette }: { onCollapse: () => void;
       </Box>
 
       <Box sx={{ borderTop: '1px solid var(--sb-border)', p: 1, display: 'flex', flexDirection: 'column', gap: 0.25 }}>
+        <FooterLink to="/usage" icon={<BarChartRoundedIcon sx={{ fontSize: 18 }} />} label="Usage" />
         <FooterLink
           to="/memory"
           icon={<PsychologyAltOutlinedIcon sx={{ fontSize: 18 }} />}

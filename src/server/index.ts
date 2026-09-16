@@ -20,6 +20,11 @@ for (const conversation of temporary) {
 }
 
 const services = createServices(repos);
+// Replies saved before usage tracking existed.
+if ((await repos.usage.count()) === 0) {
+  const backfilled = await services.usage.backfill();
+  if (backfilled > 0) console.info(`[db] recorded usage for ${backfilled} earlier replies`);
+}
 const app = new Hono();
 app.route('/api', createApi(services));
 

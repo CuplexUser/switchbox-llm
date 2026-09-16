@@ -277,6 +277,70 @@ describe('ChatService web tools', () => {
   });
 });
 
+describe('ChatService memory tools', () => {
+  it('offers memory tools with memory on, saves facts as active and dedupes across panes', async () => {
+    const provider = new FakeProvider((request) =>
+      request.messages.some((message) => message.role === 'tool')
+        ? [{ type: 'text', text: 'Got it.' }]
+        : [
+            {
+              type: 'tool_call',
+              call: { id: 'm1', name: 'memory_save', arguments: '{"content":"Has a dog named Rex","category":"Background"}' },
+            },
+          ],
+    );
+    const { repos, chat } = setup(provider);
+    const { conversation, pane } = await seedConversation(repos, true, true);
+    const second = await repos.panes.create({ ...pane, id: undefined, position: 1 } as never);
+
+    const events: StreamEvent[] = [];
+    await chat.run(
+      {
+        runId: 'm',
+        conversationId: conversation.id,
+        content: 'Remember that my dog is called Rex',
+        targets: [
+          { paneId: pane.id, history: [] },
+          { paneId: second.id, history: [] },
+        ],
+      },
+      (event) => void events.push(event),
+      new Map(),
+    );
+
+    expect(provider.requests[0]?.tools?.map((tool) => tool.name)).toEqual(['memory_save', 'memory_forget']);
+    expect(provider.requests[0]?.system).toContain('long-term memory');
+    const saved = await repos.memories.findMany();
+    expect(saved).toMatchObject([{ content: 'Has a dog named Rex', category: 'background', source: 'model', status: 'active' }]);
+    const done = events.find((event) => event.type === 'done');
+    expect(done?.type === 'done' && done.message.activity?.items).toMatchObject([{ kind: 'memory', action: 'save', done: true }]);
+  });
+
+  it('leaves memory tools out when the chat has memory off', async () => {
+    const provider = new FakeProvider(() => [{ type: 'text', text: 'Hi' }]);
+    const { repos, chat } = setup(provider);
+    const { conversation, pane } = await seedConversation(repos, false, false);
+    await runOnce(chat, conversation.id, pane.id);
+    expect(provider.requests[0]?.tools).toEqual([]);
+    expect(provider.requests[0]?.system).not.toContain('long-term memory');
+  });
+
+  it('forgets a single matching memory and lists candidates when ambiguous', async () => {
+    const { repos, memory } = setup(new FakeProvider(() => []));
+    for (const content of ['Lives in Oslo', 'Works in Oslo', 'Likes tea']) {
+      await repos.memories.create({ content, category: 'general', enabled: true, source: 'manual', status: 'active', sourceConversationId: null });
+    }
+    const activity: unknown[] = [];
+    const ambiguous = await memory.runTool({ id: 'f1', name: 'memory_forget', arguments: '{"content":"oslo"}' }, 'c', (item) => activity.push(item));
+    expect(ambiguous.isError).toBe(true);
+    expect(ambiguous.content).toContain('Works in Oslo');
+
+    const removed = await memory.runTool({ id: 'f2', name: 'memory_forget', arguments: '{"content":"likes tea."}' }, 'c', () => {});
+    expect(removed).toEqual({ content: 'Removed from memory: "Likes tea"', isError: false });
+    expect(await repos.memories.count()).toBe(2);
+  });
+});
+
 describe('MemoryService.suggest', () => {
   it('stores new facts as pending and skips duplicates', async () => {
     const provider = new FakeProvider(() => [

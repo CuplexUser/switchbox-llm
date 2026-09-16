@@ -19,9 +19,10 @@ import type { ProviderRegistry } from '../providers/registry.ts';
 import { isToolsUnsupported, type LoopMessage, type ToolCall, type ToolSpec } from '../providers/types.ts';
 import { nativeSearchSupport, planSearch, type SearchProvider } from '../web/search.ts';
 import { runTool, WEB_FETCH_TOOL, WEB_SEARCH_TOOL } from '../web/tools.ts';
-import { buildSystemPrompt, type MemoryService } from './memory.ts';
+import { buildSystemPrompt, isMemoryTool, MEMORY_TOOLS, memoryGuidance, type MemoryService } from './memory.ts';
 import type { SettingsService } from './settings.ts';
 import { serialize } from './serialize.ts';
+import { usageFromMessage } from './usage.ts';
 
 export const DEFAULT_TITLE = 'New chat';
 /** Bound on resuming a turn the provider parked mid-search (Anthropic pause_turn). */
@@ -113,11 +114,14 @@ export class ChatService {
     const all = await this.settings.getAll();
     const provider = pane.provider as ProviderId;
     const web = planWeb(conversation.webAccess, all.web, provider, pane.model);
-    const system = [buildSystemPrompt(base, facts), webGuidance(web)].filter(Boolean).join('\n\n');
+    const system = [buildSystemPrompt(base, facts), conversation.useMemory ? memoryGuidance() : '', webGuidance(web)]
+      .filter(Boolean)
+      .join('\n\n');
     return {
       system,
       facts,
       web,
+      tools: conversation.useMemory ? [...web.tools, ...MEMORY_TOOLS] : web.tools,
       params: mergeParams(all.generation, pane.params as Partial<GenerationParams>),
       webSettings: all.web,
       provider,
@@ -129,7 +133,7 @@ export class ChatService {
     return {
       system: assembled.system,
       memoryCount: assembled.facts.length,
-      tools: assembled.web.tools.map((tool) => tool.name),
+      tools: assembled.tools.map((tool) => tool.name),
       search: assembled.web.resolved,
       searchNote: assembled.web.note,
       provider: assembled.provider,
@@ -226,6 +230,7 @@ export class ChatService {
       const assembled = await this.assemble(conversation, pane);
       const provider = await this.registry.get(assembled.provider);
       let web = assembled.web;
+      let tools = assembled.tools;
       if (web.note) recordActivity({ id: randomUUID(), kind: 'notice', text: web.note, done: true });
 
       let toolRounds = 0;
@@ -246,7 +251,7 @@ export class ChatService {
             messages,
             params: assembled.params,
             signal,
-            tools: web.tools,
+            tools,
             nativeSearch: web.nativeSearch,
           })) {
             switch (event.type) {
@@ -298,13 +303,18 @@ export class ChatService {
             }
           }
         } catch (error) {
-          // Many local models reject tool definitions outright. Answer without web access instead of failing.
-          if (!emitted && !signal.aborted && (web.tools.length > 0 || web.nativeSearch) && isToolsUnsupported(error)) {
+          // Many local models reject tool definitions outright. Answer without tools instead of failing.
+          if (!emitted && !signal.aborted && (tools.length > 0 || web.nativeSearch) && isToolsUnsupported(error)) {
+            const lost = [
+              web.tools.length > 0 || web.nativeSearch ? 'web access' : null,
+              tools.some((tool) => isMemoryTool(tool.name)) ? 'saving memories' : null,
+            ].filter(Boolean);
             web = { ...web, tools: [], nativeSearch: false, resolved: 'none' };
+            tools = [];
             recordActivity({
               id: randomUUID(),
               kind: 'notice',
-              text: 'This model does not support tools, so it answered without web access.',
+              text: `This model does not support tools, so it answered without ${lost.join(' or ')}.`,
               done: true,
             });
             continue;
@@ -346,7 +356,13 @@ export class ChatService {
           onActivity: recordActivity,
           onSource: recordSource,
         };
-        const results = await Promise.all(calls.map((call) => runTool(call, context)));
+        const results = await Promise.all(
+          calls.map((call) =>
+            isMemoryTool(call.name) && conversation.useMemory
+              ? this.memory.runTool(call, conversation.id, recordActivity)
+              : runTool(call, context),
+          ),
+        );
         calls.forEach((call, index) => {
           const result = results[index];
           messages.push({
@@ -384,6 +400,11 @@ export class ChatService {
     // The repo stamps createdAt itself.
     const { createdAt: _createdAt, ...data } = message;
     const row = await this.repos.messages.create(data);
+    const usage = usageFromMessage(row);
+    if (usage) {
+      // Usage is bookkeeping: failing to record it must not lose the reply.
+      await this.repos.usage.create(usage).catch((error: unknown) => console.warn('[usage] could not record:', errorMessage(error)));
+    }
     return serialize<Message>(row);
   }
 }

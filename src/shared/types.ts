@@ -136,10 +136,11 @@ export interface Source {
   title: string;
 }
 
-/** One step of web research. Emitted when it starts and again when it finishes, with the same id. */
+/** One tool step: web research or a memory change. Emitted when it starts and again when it finishes, with the same id. */
 export type ActivityItem =
   | { id: string; kind: 'search'; engine: SearchEngine; query: string; resultCount: number | null; done: boolean; error?: string }
   | { id: string; kind: 'fetch'; url: string; done: boolean; chars?: number; error?: string }
+  | { id: string; kind: 'memory'; action: 'save' | 'forget'; content: string; done: boolean; error?: string }
   | { id: string; kind: 'notice'; text: string; done: true };
 
 export interface MessageActivity {
@@ -176,7 +177,8 @@ export interface SystemPrompt {
   updatedAt: string;
 }
 
-export type MemorySource = 'manual' | 'suggested';
+/** manual: added on the Memory page. suggested: proposed after a reply. model: saved by a model with memory_save. */
+export type MemorySource = 'manual' | 'suggested' | 'model';
 export type MemoryStatus = 'active' | 'pending' | 'rejected';
 
 export interface Memory {
@@ -225,7 +227,7 @@ export type StreamEvent =
 export interface PromptPreview {
   system: string;
   memoryCount: number;
-  /** Local tools offered to the model, e.g. web_search, web_fetch. */
+  /** Local tools offered to the model, e.g. web_search, web_fetch, memory_save. */
   tools: string[];
   /** How web search runs for this pane, or 'none' when the chat has web access off. */
   search: ResolvedSearch;
@@ -244,4 +246,54 @@ export interface ExportBundle {
   systemPrompts: SystemPrompt[];
   memories: Memory[];
   settings: Partial<AppSettings>;
+}
+
+export type UsageRange = '7d' | '30d' | '90d' | 'all';
+export type UsageMetric = 'tokens' | 'cost' | 'replies';
+
+/**
+ * reported: the provider said what it charged. estimated: worked out from list prices.
+ * local: a model running on this machine. unknown: no price could be found.
+ */
+export type CostKind = 'reported' | 'estimated' | 'local' | 'unknown';
+
+export interface UsageTotals {
+  replies: number;
+  failed: number;
+  chats: number;
+  tokensIn: number;
+  tokensOut: number;
+  /** Reported plus estimated. */
+  cost: number;
+  reportedCost: number;
+  estimatedCost: number;
+  /** Replies with tokens but no price to estimate from. */
+  unpricedReplies: number;
+  medianTtftMs: number | null;
+  medianTokensPerSecond: number | null;
+}
+
+export interface UsageBucket {
+  /** Local date the bucket starts on, YYYY-MM-DD. */
+  date: string;
+  tokens: number;
+  cost: number;
+  replies: number;
+}
+
+export interface UsageModelRow extends UsageTotals {
+  provider: ProviderId;
+  model: string;
+  costKind: CostKind;
+}
+
+export interface UsageReport {
+  range: UsageRange;
+  /** Days for short ranges; weeks when "all" spans too long for one bar a day. */
+  bucket: 'day' | 'week';
+  buckets: UsageBucket[];
+  totals: UsageTotals;
+  models: UsageModelRow[];
+  /** Providers with usage in the range, for the filter. */
+  providers: ProviderId[];
 }

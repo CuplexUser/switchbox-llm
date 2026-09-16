@@ -10,12 +10,14 @@ import {
   paneSchema,
   settingSchema,
   systemPromptSchema,
+  usageRecordSchema,
   type ConversationRow,
   type MemoryRow,
   type MessageRow,
   type PaneRow,
   type SettingRow,
   type SystemPromptRow,
+  type UsageRecordRow,
 } from './schemas.ts';
 
 const BOTH = { createdAt: 'createdAt', updatedAt: 'updatedAt' } as const;
@@ -27,6 +29,7 @@ export interface Repos {
   panes: Repo<PaneRow>;
   messages: Repo<MessageRow>;
   memories: Repo<MemoryRow>;
+  usage: Repo<UsageRecordRow>;
 }
 
 export async function openRepos(file: string): Promise<Repos> {
@@ -67,6 +70,8 @@ export async function openRepos(file: string): Promise<Repos> {
       timestamps: { createdAt: 'createdAt', updatedAt: false },
     }),
     memories: await createRepo<MemoryRow>({ ...base, table: 'memories', schema: memorySchema, timestamps: true }),
+    // No timestamps: createdAt is copied from the reply, including for backfilled rows.
+    usage: await createRepo<UsageRecordRow>({ ...base, table: 'usage_records', schema: usageRecordSchema, ids: 'provided' }),
   };
 
   for (const repo of Object.values(repos) as Repo<unknown>[]) {
@@ -110,5 +115,6 @@ export function memoryRepos(): Repos {
       store,
     }),
     memories: new MemoryRepo<MemoryRow>({ table: 'memories', schema: memorySchema, timestamps: BOTH, store }),
+    usage: new MemoryRepo<UsageRecordRow>({ table: 'usage_records', schema: usageRecordSchema, ids: 'provided', store }),
   };
 }

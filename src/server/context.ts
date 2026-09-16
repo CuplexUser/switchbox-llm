@@ -5,6 +5,7 @@ import type { ProviderRegistry } from './providers/registry.ts';
 import type { ChatService } from './services/chat.ts';
 import type { MemoryService } from './services/memory.ts';
 import type { SettingsService } from './services/settings.ts';
+import type { UsageService } from './services/usage.ts';
 
 export interface Services {
   repos: Repos;
@@ -12,6 +13,7 @@ export interface Services {
   registry: ProviderRegistry;
   memory: MemoryService;
   chat: ChatService;
+  usage: UsageService;
 }
 
 export function badRequest(message: string): HTTPException {

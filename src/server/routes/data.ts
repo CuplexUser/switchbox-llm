@@ -6,7 +6,7 @@ import { reviveDates, serialize } from '../services/serialize.ts';
 
 const DATE_FIELDS = ['createdAt', 'updatedAt'];
 
-export function dataRoutes({ repos, settings }: Services): Hono {
+export function dataRoutes({ repos, settings, usage }: Services): Hono {
   const app = new Hono();
 
   app.get('/data/export', async (c) => {
@@ -49,10 +49,12 @@ export function dataRoutes({ repos, settings }: Services): Hono {
       systemPrompts: await insert(repos.systemPrompts, bundle.systemPrompts),
       memories: await insert(repos.memories, bundle.memories),
     };
+    if (imported.messages > 0) await usage.backfill();
     if (bundle.settings) await settings.replaceAll(bundle.settings);
     return c.json({ imported });
   });
 
+  // Usage rows are left alone, so totals still count the deleted chats.
   app.delete('/data/history', async (c) => {
     const removed = await repos.conversations.withTransaction(async (tx, ctx) => {
       await repos.messages.with(ctx).deleteMany();

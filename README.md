@@ -13,9 +13,11 @@ in parallel.
   starter prompts ("General assistant" and "Research analyst") are added on first run
 - **Web search:** models can search the web and read pages, with Tavily, Brave, or the provider's own search.
   Each reply shows what was searched and which sources were used
-- **Memory:** facts about you that are added to the system prompt. A model you choose can suggest new ones
-  for you to keep or dismiss
+- **Memory:** facts about you that are added to the system prompt. Models can save and forget facts when you
+  ask them to, and a model you choose can suggest new ones for you to keep or dismiss
 - **Stats:** time to first token, tokens per second, token counts, and cost where the provider reports it
+- **Usage:** a page with token usage, cost and speed per model over time, so you don't need each provider's
+  dashboard
 
 ## Requirements
 
@@ -68,7 +70,38 @@ refuses localhost and private-network addresses, including redirects and hostnam
 With Tavily or Brave, the server runs a tool loop: the model calls a tool, the server runs it and sends back the
 result, and this repeats up to the "Tool rounds per reply" limit. After that, the model is asked to answer with
 what it has. Models that reject tool definitions, which is common with local models, automatically get a retry
-without web access.
+without tools.
+
+## Memory
+
+Memories are facts about you, listed on the Memory page. In chats with memory turned on, the active ones are
+added to the system prompt, and models get two tools:
+
+| Tool | What it does |
+| --- | --- |
+| `memory_save` | Saves a fact, e.g. when you say "remember that I use metric units". It is active right away and marked "Saved by a model" |
+| `memory_forget` | Removes the memory that matches the text it's given. When several match, nothing is removed and the model gets the candidates back |
+
+Saving a fact that already exists does nothing, or turns it back on if it was paused or dismissed. The system
+prompt tells the model it has long-term memory, so it uses these tools instead of saying it can't remember.
+
+Under Settings → Memory you can also have a model read each exchange and suggest facts. Those wait in
+Suggestions until you keep or dismiss them.
+
+## Usage
+
+The Usage page totals tokens, cost, replies and median speed for the last 7, 30 or 90 days or all time. It can
+be filtered by provider, and it shows a chart per day (per week for long histories) and a table per model.
+
+- Every saved reply writes a row to `usage_records`. The rows stay when a chat is deleted, including through
+  Settings → Data, so totals include deleted chats. Temporary chats aren't recorded
+- **Reported** cost is what OpenRouter charged for the reply
+- **Estimated** cost uses list prices from OpenRouter's public model catalog, which needs no key. Anthropic and
+  OpenAI models are matched by name, e.g. `claude-sonnet-4-5-20250929` to `anthropic/claude-sonnet-4.5`.
+  Prices are cached for six hours
+- Ollama and LM Studio models count as free. Models with no price show "no price" and are left out of the cost
+- Replies saved before usage tracking existed are added on the first start, and so are replies from an import
+- Use of the same API keys outside Switchbox doesn't show up
 
 ## Production
 
@@ -109,10 +142,10 @@ src/
     db/         repolayer schemas and repos (one table per repo)
     providers/  OpenAI-compatible and Anthropic streaming adapters (tool calls, native search)
     web/        Tavily and Brave search, safe page fetching, tool definitions
-    services/   chat runs, prompt assembly, memory suggestions, settings
+    services/   chat runs, prompt assembly, memory tools and suggestions, usage reports, settings
     routes/     REST endpoints and the /api/chat/stream SSE endpoint
   client/    React 19, MUI 9, TanStack Query, Zustand
-    features/   chat, memory, settings
+    features/   chat, memory, settings, usage
     stores/     live streaming state per pane
 ```
 

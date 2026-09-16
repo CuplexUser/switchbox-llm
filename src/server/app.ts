@@ -10,16 +10,19 @@ import { dataRoutes } from './routes/data.ts';
 import { memoryRoutes } from './routes/memories.ts';
 import { promptRoutes } from './routes/prompts.ts';
 import { settingsRoutes } from './routes/settings.ts';
+import { usageRoutes } from './routes/usage.ts';
 import { ChatService } from './services/chat.ts';
 import { MemoryService } from './services/memory.ts';
 import { SettingsService } from './services/settings.ts';
+import { UsageService } from './services/usage.ts';
 
 export function createServices(repos: Repos): Services {
   const settings = new SettingsService(repos);
   const registry = new ProviderRegistry(settings);
   const memory = new MemoryService(repos, settings, registry);
   const chat = new ChatService(repos, settings, registry, memory);
-  return { repos, settings, registry, memory, chat };
+  const usage = new UsageService(repos, registry);
+  return { repos, settings, registry, memory, chat, usage };
 }
 
 export function createApi(services: Services): Hono {
@@ -32,6 +35,7 @@ export function createApi(services: Services): Hono {
   api.route('/', chatRoutes(services));
   api.route('/', memoryRoutes(services));
   api.route('/', dataRoutes(services));
+  api.route('/', usageRoutes(services));
 
   api.notFound((c) => c.json({ error: 'Not found' }, 404));
   api.onError((error, c) => {

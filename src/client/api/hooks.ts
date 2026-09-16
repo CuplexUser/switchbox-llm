@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   AppSettings,
   Conversation,
@@ -14,6 +14,8 @@ import type {
   ProviderStatus,
   SettingsSection,
   SystemPrompt,
+  UsageRange,
+  UsageReport,
   WebStatus,
 } from '../../shared/types.ts';
 import { api } from './client.ts';
@@ -29,6 +31,7 @@ export const keys = {
   messages: (id: string) => ['messages', id] as const,
   memories: (status?: MemoryStatus) => ['memories', status ?? 'all'] as const,
   pendingCount: ['memories', 'pending-count'] as const,
+  usage: (range: UsageRange, provider: ProviderId | null) => ['usage', range, provider ?? 'all'] as const,
 };
 
 // Settings and providers
@@ -288,5 +291,16 @@ export function useDeleteMemory() {
   return useMutation({
     mutationFn: (id: string) => api<void>(`/memories/${id}`, { method: 'DELETE' }),
     onSuccess: () => invalidateMemories(client),
+  });
+}
+
+// Usage
+
+export function useUsage(range: UsageRange, provider: ProviderId | null) {
+  return useQuery({
+    queryKey: keys.usage(range, provider),
+    queryFn: () => api<UsageReport>(`/usage?range=${range}${provider ? `&provider=${provider}` : ''}`),
+    // Keep the last report on screen while switching range or provider.
+    placeholderData: keepPreviousData,
   });
 }

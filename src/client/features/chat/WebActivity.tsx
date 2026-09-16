@@ -1,6 +1,7 @@
 import ArticleOutlinedIcon from '@mui/icons-material/ArticleOutlined';
 import ExpandMoreRoundedIcon from '@mui/icons-material/ExpandMoreRounded';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
+import PsychologyAltOutlinedIcon from '@mui/icons-material/PsychologyAltOutlined';
 import PublicRoundedIcon from '@mui/icons-material/PublicRounded';
 import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
 import Box from '@mui/material/Box';
@@ -44,10 +45,16 @@ function summarize(items: ActivityItem[], sources: Source[]): string {
     items.filter((item) => item.kind === kind && Boolean('error' in item && item.error) === failed).length;
   const searches = count('search', false);
   const fetches = count('fetch', false);
-  const failures = count('search', true) + count('fetch', true);
+  const memories = (action: 'save' | 'forget') =>
+    items.filter((item) => item.kind === 'memory' && item.action === action && !item.error).length;
+  const saved = memories('save');
+  const forgotten = memories('forget');
+  const failures = count('search', true) + count('fetch', true) + count('memory', true);
   const parts = [
     searches ? `Searched ${searches === 1 ? 'once' : `${searches} times`}` : null,
     fetches ? `read ${plural(fetches, 'page', 'pages')}` : null,
+    saved ? `saved ${plural(saved, 'memory', 'memories')}` : null,
+    forgotten ? `forgot ${plural(forgotten, 'memory', 'memories')}` : null,
     failures ? `${plural(failures, 'step', 'steps')} failed` : null,
     sources.length ? plural(sources.length, 'source', 'sources') : null,
   ].filter((part): part is string => Boolean(part));
@@ -59,16 +66,24 @@ function runningLabel(item: ActivityItem): string | null {
   if (item.done) return null;
   if (item.kind === 'search') return `Searching “${item.query}”`;
   if (item.kind === 'fetch') return `Reading ${shortUrl(item.url)}`;
+  if (item.kind === 'memory') return item.action === 'save' ? 'Saving to memory' : 'Removing from memory';
   return null;
 }
 
 function Step({ item }: { item: Exclude<ActivityItem, { kind: 'notice' }> }) {
   const icon =
-    item.kind === 'search' ? <SearchRoundedIcon sx={{ fontSize: 15 }} /> : <ArticleOutlinedIcon sx={{ fontSize: 15 }} />;
+    item.kind === 'search' ? (
+      <SearchRoundedIcon sx={{ fontSize: 15 }} />
+    ) : item.kind === 'memory' ? (
+      <PsychologyAltOutlinedIcon sx={{ fontSize: 15 }} />
+    ) : (
+      <ArticleOutlinedIcon sx={{ fontSize: 15 }} />
+    );
   let detail: string | null = null;
   if (item.error) detail = item.error;
   else if (item.kind === 'search' && item.resultCount !== null) detail = plural(item.resultCount, 'result', 'results');
   else if (!item.done) detail = 'In progress';
+  else if (item.kind === 'memory') detail = item.action === 'save' ? 'Saved to memory' : 'Removed from memory';
 
   return (
     <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', py: 0.375 }}>
@@ -81,6 +96,10 @@ function Step({ item }: { item: Exclude<ActivityItem, { kind: 'notice' }> }) {
               {' '}
               via {ENGINE_LABELS[item.engine]}
             </Box>
+          </Typography>
+        ) : item.kind === 'memory' ? (
+          <Typography variant="body2" sx={{ fontSize: '0.8125rem', overflowWrap: 'anywhere' }}>
+            {item.content}
           </Typography>
         ) : (
           <Typography
@@ -114,6 +133,7 @@ export function WebActivity({ items, sources, live = false }: { items: ActivityI
   const steps = items.filter((item): item is Exclude<ActivityItem, { kind: 'notice' }> => item.kind !== 'notice');
   const running = live ? steps.map(runningLabel).findLast(Boolean) : null;
   const hasDetail = steps.length > 0 || sources.length > 0;
+  const memoryOnly = sources.length === 0 && steps.every((item) => item.kind === 'memory');
 
   if (notices.length === 0 && !hasDetail) return null;
 
@@ -163,6 +183,8 @@ export function WebActivity({ items, sources, live = false }: { items: ActivityI
                   '@keyframes sb-web-pulse': { '50%': { opacity: 0.3 } },
                 }}
               />
+            ) : memoryOnly ? (
+              <PsychologyAltOutlinedIcon sx={{ fontSize: 15 }} />
             ) : (
               <PublicRoundedIcon sx={{ fontSize: 15 }} />
             )}

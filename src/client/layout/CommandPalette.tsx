@@ -1,4 +1,5 @@
 import AddRoundedIcon from '@mui/icons-material/AddRounded';
+import BarChartRoundedIcon from '@mui/icons-material/BarChartRounded';
 import ChatBubbleOutlineRoundedIcon from '@mui/icons-material/ChatBubbleOutlineRounded';
 import PsychologyAltOutlinedIcon from '@mui/icons-material/PsychologyAltOutlined';
 import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
@@ -30,6 +31,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     const go = (path: string) => () => void navigate(path);
     const actions: Command[] = [
       { id: 'new', label: 'New chat', hint: 'Ctrl Shift O', icon: <AddRoundedIcon fontSize="small" />, run: go('/') },
+      { id: 'usage', label: 'Usage', icon: <BarChartRoundedIcon fontSize="small" />, run: go('/usage') },
       { id: 'memory', label: 'Memory', icon: <PsychologyAltOutlinedIcon fontSize="small" />, run: go('/memory') },
       { id: 'settings', label: 'Settings', icon: <SettingsOutlinedIcon fontSize="small" />, run: go('/settings/general') },
       { id: 'providers', label: 'Provider settings', icon: <TuneRoundedIcon fontSize="small" />, run: go('/settings/providers') },

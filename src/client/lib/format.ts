@@ -2,6 +2,7 @@ import type { Conversation } from '../../shared/types.ts';
 
 export function formatTokens(count: number | null | undefined): string | null {
   if (count === null || count === undefined) return null;
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(count >= 10_000_000 ? 1 : 2)}M`;
   return count >= 1000 ? `${(count / 1000).toFixed(count >= 10_000 ? 0 : 1)}k` : String(count);
 }
 
@@ -14,6 +15,13 @@ export function formatCost(usd: number | null | undefined): string | null {
   if (usd === null || usd === undefined) return null;
   if (usd === 0) return '$0';
   return usd < 0.01 ? `$${usd.toFixed(4)}` : `$${usd.toFixed(3)}`;
+}
+
+/** Dollar amounts for totals: cents, or four places when under a cent. */
+export function formatUsd(usd: number): string {
+  if (usd === 0) return '$0';
+  if (usd < 0.01) return `$${usd.toFixed(4)}`;
+  return `$${usd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 export function formatPrice(perMillion: number): string {

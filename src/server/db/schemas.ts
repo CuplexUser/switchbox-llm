@@ -80,3 +80,20 @@ export type ConversationRow = Infer<typeof conversationSchema>;
 export type PaneRow = Infer<typeof paneSchema>;
 export type MessageRow = Infer<typeof messageSchema>;
 export type MemoryRow = Infer<typeof memorySchema>;
+
+/** One row per assistant reply, kept when its chat is deleted so usage totals stay complete. The id is the message id. */
+export const usageRecordSchema = defineSchema({
+  id: { type: 'string', primaryKey: true },
+  conversationId: { type: 'string', column: 'conversation_id' },
+  provider: { type: 'string' },
+  model: { type: 'string' },
+  tokensIn: { type: 'integer', nullable: true, column: 'tokens_in' },
+  tokensOut: { type: 'integer', nullable: true, column: 'tokens_out' },
+  cost: { type: 'number', nullable: true },
+  ttftMs: { type: 'integer', nullable: true, column: 'ttft_ms' },
+  latencyMs: { type: 'integer', nullable: true, column: 'latency_ms' },
+  failed: { type: 'boolean' },
+  createdAt: { type: 'date', column: 'created_at' },
+});
+
+export type UsageRecordRow = Infer<typeof usageRecordSchema>;

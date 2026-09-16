@@ -104,7 +104,7 @@ function MemoryRow({ memory }: { memory: Memory }) {
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
           <CategoryTag category={memory.category} />
           <Typography variant="caption" sx={{ color: 'var(--sb-text-faint)' }}>
-            {memory.source === 'suggested' ? 'Suggested' : 'Added by you'}, {new Date(memory.createdAt).toLocaleDateString()}
+            {memory.source === 'suggested' ? 'Suggested' : memory.source === 'model' ? 'Saved by a model' : 'Added by you'}, {new Date(memory.createdAt).toLocaleDateString()}
           </Typography>
         </Box>
       </Box>
