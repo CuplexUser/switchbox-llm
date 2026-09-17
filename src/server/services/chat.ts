@@ -49,6 +49,11 @@ export function cleanTitle(text: string): string {
   return clean.length > 60 ? `${clean.slice(0, 57).trimEnd()}…` : clean;
 }
 
+/** The user message an edit rewrites in `pane`: from `messageIds`, or `messageId` when one pane is edited. */
+function editTarget(request: StreamRequest, pane: { id: string }): string | undefined {
+  return request.messageIds?.[pane.id] ?? (request.paneIds.length === 1 ? request.messageId : undefined);
+}
+
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -212,7 +217,9 @@ export class ChatService {
     const panes = await repos.panes.findMany({ where: { conversationId: conversation.id } });
     const targets = request.paneIds.map((id) => panes.find((pane) => pane.id === id));
     if (targets.some((pane) => !pane)) throw new Error('A pane was not found in this conversation');
-    if (request.action === 'edit' && (targets.length !== 1 || !request.messageId)) throw new Error('Edit one message in one pane at a time');
+    if (request.action === 'edit' && targets.some((pane) => !editTarget(request, pane as PaneRow))) {
+      throw new Error('Name the message to edit in each pane');
+    }
 
     const content = request.content ?? '';
     const refs = request.action === 'send' && request.attachmentIds?.length ? await attachments.claim(request.attachmentIds, conversation.id) : [];
@@ -296,7 +303,7 @@ export class ChatService {
 
     const index =
       request.action === 'edit'
-        ? rows.findIndex((row) => row.id === request.messageId && row.role === 'user')
+        ? rows.findIndex((row) => row.id === editTarget(request, pane) && row.role === 'user')
         : rows.findLastIndex((row) => row.role === 'user');
     const target = rows[index];
     if (!target) {

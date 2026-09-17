@@ -30,7 +30,9 @@ function GenerationForm({ saved }: { saved: GenerationParams }) {
         <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
           Anthropic requires an output limit, so Switchbox sends 32,000 tokens to models that think and 8,192 to older
           ones when none is set. Temperature and top P are left out for newer Claude models, which reject them, and some
-          other reasoning models reject them too.
+          other reasoning models reject them too. Reasoning effort is sent as the nearest level a provider offers:
+          newer Claude models think adaptively at that effort, older ones use the thinking budget, and OpenAI and
+          OpenRouter get their own reasoning setting.
         </Typography>
         <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1, mt: 2 }}>
           <Button color="inherit" disabled={!dirty} onClick={() => setParams(saved)}>

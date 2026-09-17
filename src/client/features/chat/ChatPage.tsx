@@ -15,7 +15,7 @@ import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { Fragment, useEffect, useMemo, useState } from 'react';
-import { Link as RouterLink, useParams } from 'react-router';
+import { Link as RouterLink, useLocation, useParams } from 'react-router';
 import { MAX_PANES } from '../../../shared/defaults.ts';
 import type { ConversationDetail } from '../../../shared/types.ts';
 import {
@@ -29,6 +29,7 @@ import { ModelPicker } from '../../components/ModelPicker.tsx';
 import { shortModel } from '../../lib/format.ts';
 import { useChatStore } from '../../stores/chat.ts';
 import { channelSoftVar, channelVar } from '../../theme/theme.ts';
+import { ChatActionsMenu } from './ChatActionsMenu.tsx';
 import { Composer } from './Composer.tsx';
 import { Pane } from './Pane.tsx';
 import { ToolsMenu } from './ToolsMenu.tsx';
@@ -130,6 +131,7 @@ function ChatView({ conversationId }: { conversationId: string }) {
   const [addAnchor, setAddAnchor] = useState<HTMLElement | null>(null);
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [tab, setTab] = useState(0);
+  const { hash } = useLocation();
 
   useEffect(() => {
     if (messages.data) hydrate(conversationId, messages.data);
@@ -138,6 +140,15 @@ function ChatView({ conversationId }: { conversationId: string }) {
   const data = conversation.data;
   const panes = useMemo(() => data?.panes ?? [], [data]);
   const targets = panes.filter((pane) => !excluded.has(pane.id));
+
+  // On narrow screens only one pane shows, so a link to a message opens that message's pane.
+  const linkedPane = hash.startsWith('#message-') ? messages.data?.find((message) => `#message-${message.id}` === hash)?.paneId : undefined;
+  const [shownLink, setShownLink] = useState<string | undefined>(undefined);
+  if (linkedPane !== shownLink) {
+    setShownLink(linkedPane);
+    const index = panes.findIndex((pane) => pane.id === linkedPane);
+    if (index !== -1) setTab(index);
+  }
 
   if (conversation.error) {
     return (
@@ -225,6 +236,7 @@ function ChatView({ conversationId }: { conversationId: string }) {
           }
         />
         <ToolsMenu conversation={data} compact={narrow} />
+        <ChatActionsMenu conversation={data} />
         <Tooltip title={panes.length >= MAX_PANES ? `Up to ${MAX_PANES} models per chat` : 'Add a model to compare'}>
           <span>
             <Button
@@ -277,7 +289,14 @@ function ChatView({ conversationId }: { conversationId: string }) {
           narrow && index !== Math.min(tab, panes.length - 1) ? (
             <Fragment key={pane.id} />
           ) : (
-            <Pane key={pane.id} conversation={data} pane={pane} index={index} canRemove={panes.length > 1} />
+            <Pane
+              key={pane.id}
+              conversation={data}
+              pane={pane}
+              index={index}
+              canRemove={panes.length > 1}
+              onSendOnlyHere={panes.length > 1 ? () => setExcluded(new Set(panes.filter((other) => other.id !== pane.id).map((other) => other.id))) : undefined}
+            />
           ),
         )}
       </Box>

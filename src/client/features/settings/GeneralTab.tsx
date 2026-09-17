@@ -4,6 +4,7 @@ import ToggleButton from '@mui/material/ToggleButton';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import type { AppSettings } from '../../../shared/types.ts';
 import { useSettings, useUpdateSettings } from '../../api/hooks.ts';
+import { ModelButton } from '../../components/ModelButton.tsx';
 import { Panel, SettingRow, SettingsHeader } from './Section.tsx';
 
 export function GeneralTab() {
@@ -63,6 +64,17 @@ export function GeneralTab() {
             checked={general.sendOnEnter}
             onChange={(event) => set('sendOnEnter', event.target.checked)}
             slotProps={{ input: { 'aria-label': 'Send with Enter' } }}
+          />
+        </SettingRow>
+        <SettingRow
+          label="Title model"
+          description="Writes a short title from your first message. Without one, chats are titled with the first line of that message."
+        >
+          <ModelButton
+            value={general.titleModel}
+            onChange={(ref) => set('titleModel', ref)}
+            placeholder="First line of the message"
+            clearLabel="Use the first line instead"
           />
         </SettingRow>
       </Panel>

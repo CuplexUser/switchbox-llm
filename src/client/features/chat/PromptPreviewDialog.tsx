@@ -26,6 +26,8 @@ export function PromptPreviewDialog({ paneId, onClose }: { paneId: string | null
         ['Temperature', data.params.temperature],
         ['Top P', data.params.topP],
         ['Max tokens', data.params.maxTokens],
+        ['Reasoning effort', data.params.reasoningEffort],
+        ['Thinking budget', data.params.thinkingBudget],
       ]
     : [];
 

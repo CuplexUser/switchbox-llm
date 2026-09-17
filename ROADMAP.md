@@ -7,8 +7,7 @@ _server done_ have their API and tests in place and are waiting for their UI.
 ## Status
 
 - **Phase A (agents and tools):** done
-- **Phase B (chat features):** attachments done; edit and branch, search, titles and reasoning settings have
-  server support and need UI; comparison tools, export and retry are open
+- **Phase B (chat features):** done
 - **Phase C (memory):** relevance done; scopes, history, duplicates and conflicts have server support and need UI
 - **Phase D (security):** done except the Memory page notice for suggestion failures
 - **Phase E (quality):** CI, loop tests, the chat service split and structured logs done; client tests and
@@ -44,18 +43,19 @@ _server done_ have their API and tests in place and are waiting for their UI.
 
 - [x] **B1. Attachments and images** (L). Upload by button, drag and drop or paste; images, PDFs and text files
       are stored in the database and sent in each provider's format.
-- [ ] **B2. Edit a message and branch** (M). _Server done:_ the `edit` stream action,
-      `POST /api/conversations/:id/branch`, and `edit` in the chat store. Needs the edit and branch buttons.
-- [ ] **B3. Comparison tools** (M). Diff two panes, mark the best reply (_server done:_ `messages.preferred`),
-      continue with only that pane, and show totals per run across panes.
-- [ ] **B4. Search across chats** (S–M). _Server done:_ `GET /api/search`, which matches every word with
-      repolayer's `ilike` (repolayer has no full-text search). Needs results in the Ctrl+K palette.
-- [ ] **B5. Titles written by a model** (S). _Server done:_ `settings.general.titleModel`. Needs the setting on
-      the General tab.
-- [ ] **B6. Reasoning controls** (S–M). _Server done:_ effort and thinking budget in both adapters, following each
-      Claude model's rules. Needs the fields in generation settings.
-- [ ] **B7. Export a chat** as Markdown, or a comparison as a static HTML file (S).
-- [ ] **B8. Retry with another model** when a reply fails (S).
+- [x] **B2. Edit a message and branch** (M). Editing a message rewrites it in every pane that has the same message
+      and answers again (the `edit` stream action takes a message id per pane). Any reply can branch into a new chat.
+- [x] **B3. Comparison tools** (M). "Compare replies" in the chat's menu shows each pane's speed, tokens and cost
+      for an exchange, with totals for the exchange and the whole chat, and a word diff of two panes. One reply per
+      exchange can be marked as the best, and "Send only to this pane" continues with one model.
+- [x] **B4. Search across chats** (S–M). The Ctrl+K palette lists matching saved messages under chats and actions,
+      and opens the chat at that message. Matching uses repolayer's `ilike` on every word, since repolayer has no
+      full-text search.
+- [x] **B5. Titles written by a model** (S). Settings → General → Title model; without one, the first line is used.
+- [x] **B6. Reasoning controls** (S–M). Reasoning effort and thinking budget in generation settings, profiles and
+      pane settings, sent in each provider's format following each Claude model's rules.
+- [x] **B7. Export a chat** as Markdown, or as a static HTML page with replies side by side (S).
+- [x] **B8. Retry with another model** when a reply fails (S). The pane keeps the model it was switched to.
 
 ## C. Memory
 

@@ -6,9 +6,14 @@ in parallel.
 
 - **Providers:** OpenRouter, OpenAI, Anthropic, Ollama, LM Studio, and any OpenAI-compatible endpoint
 - **Comparison:** up to 4 panes per chat, each with its own stop button and a regenerate action; a
-  single composer can target all panes or only some
+  single composer can target all panes or only some. "Compare replies" shows each exchange's speed, tokens and
+  cost with totals, and a word-level diff of any two panes. One reply per exchange can be marked as the best
+- **Editing:** edit a message you sent and every pane that has it answers again; branch any reply into a new
+  chat; a failed reply can be retried or sent to another model
+- **Export:** a chat as Markdown, or as a single HTML page with the replies side by side
 - **History:** messages are saved to SQLite through [repolayer](https://www.npmjs.com/package/repolayer). A
-  chat can also be temporary, in which case nothing is written
+  chat can also be temporary, in which case nothing is written. Ctrl+K searches saved messages, and a model you
+  choose can write chat titles
 - **Profiles:** reusable system prompts that can also limit tools and set their own tool round limit and
   generation settings, plus custom instructions for each pane. Two starter prompts ("General assistant" and
   "Research analyst") are added on first run
@@ -19,6 +24,8 @@ in parallel.
 - **Attachments:** images, PDFs and text files can be attached to a message
 - **Memory:** facts about you that are added to the system prompt. Models can save, update and forget facts
   when you ask them to, and a model you choose can suggest new ones for you to keep or dismiss
+- **Generation settings:** temperature, top P, output limit, reasoning effort and thinking budget, as defaults,
+  per profile or per pane. Each provider gets the nearest setting it supports
 - **Stats:** time to first token, tokens per second, token counts, and cost where the provider reports it
 - **Usage:** a page with token usage, cost and speed per model over time, so you don't need each provider's
   dashboard
@@ -181,7 +188,7 @@ The server binds to `127.0.0.1` only. It also refuses API requests that aren't a
 
 | Keys | Action |
 | --- | --- |
-| Ctrl+K | Command palette: jump to a chat or page |
+| Ctrl+K | Command palette: jump to a chat or page, or search saved messages |
 | Ctrl+Shift+O | New chat |
 | Ctrl+\ | Show or hide the sidebar |
 | Enter / Shift+Enter | Send / new line (switchable in Settings) |

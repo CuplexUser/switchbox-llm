@@ -11,6 +11,7 @@ import type {
 } from '../../shared/types.ts';
 import { api } from '../api/client.ts';
 import { streamChat } from '../api/stream.ts';
+import { sameUserMessage, siblingReplies } from '../lib/turns.ts';
 
 export interface LiveReply {
   messageId: string | null;
@@ -29,7 +30,7 @@ export interface PaneRuntime {
   live: LiveReply | null;
 }
 
-interface ConversationRuntime {
+export interface ConversationRuntime {
   hydrated: boolean;
   runId: string | null;
   panes: Record<string, PaneRuntime>;
@@ -40,7 +41,7 @@ interface RunInput {
   content: string | null;
   paneIds: string[];
   attachmentIds?: string[];
-  messageId?: string;
+  messageIds?: Record<string, string>;
 }
 
 interface ChatState {
@@ -48,8 +49,10 @@ interface ChatState {
   hydrate: (conversationId: string, messages: Message[]) => void;
   send: (conversation: ConversationDetail, content: string, paneIds: string[], attachments?: AttachmentRef[]) => Promise<void>;
   regenerate: (conversation: ConversationDetail, paneId: string) => Promise<void>;
+  /** Rewrites a message and answers it again, in every pane that has the same message. */
   edit: (conversation: ConversationDetail, paneId: string, messageId: string, content: string) => Promise<void>;
   approve: (id: string, approved: boolean) => void;
+  /** Marks a reply as the best one, which unmarks the other panes' replies to the same exchange. */
   setPreferred: (conversationId: string, message: Message, preferred: boolean) => Promise<void>;
   stop: (conversationId: string, paneId?: string) => void;
   clearPane: (conversation: ConversationDetail, paneId: string) => Promise<void>;
@@ -216,6 +219,10 @@ export const useChatStore = create<ChatState>((set, get) => {
     }
   }
 
+  function messagesByPane(conversationId: string): Record<string, Message[]> {
+    return messagesByPaneOf(get().conversations[conversationId]);
+  }
+
   function busy(conversationId: string): boolean {
     return Boolean(get().conversations[conversationId]?.runId);
   }
@@ -258,14 +265,19 @@ export const useChatStore = create<ChatState>((set, get) => {
 
     async edit(conversation, paneId, messageId, content) {
       if (busy(conversation.id)) return;
-      const messages = get().conversations[conversation.id]?.panes[paneId]?.messages ?? [];
-      const index = messages.findIndex((message) => message.id === messageId);
-      if (index === -1) return;
-      updatePane(conversation.id, paneId, (pane) => ({
-        ...pane,
-        messages: messages.slice(0, index + 1).map((message) => (message.id === messageId ? { ...message, content } : message)),
-      }));
-      await run(conversation, { action: 'edit', content, paneIds: [paneId], messageId });
+      const messageIds = sameUserMessage(messagesByPane(conversation.id), paneId, messageId);
+      const paneIds = Object.keys(messageIds);
+      if (paneIds.length === 0) return;
+      for (const [id, target] of Object.entries(messageIds)) {
+        updatePane(conversation.id, id, (pane) => {
+          const index = pane.messages.findIndex((message) => message.id === target);
+          return {
+            ...pane,
+            messages: pane.messages.slice(0, index + 1).map((message) => (message.id === target ? { ...message, content } : message)),
+          };
+        });
+      }
+      await run(conversation, { action: 'edit', content, paneIds, messageIds });
     },
 
     approve(id, approved) {
@@ -273,17 +285,21 @@ export const useChatStore = create<ChatState>((set, get) => {
     },
 
     async setPreferred(conversationId, message, preferred) {
-      const apply = (value: boolean | null) =>
-        updatePane(conversationId, message.paneId, (pane) => ({
+      const others = preferred ? siblingReplies(messagesByPane(conversationId), message).filter((reply) => reply.preferred) : [];
+      const apply = (target: Message, value: boolean | null) =>
+        updatePane(conversationId, target.paneId, (pane) => ({
           ...pane,
-          messages: pane.messages.map((entry) => (entry.id === message.id ? { ...entry, preferred: value } : entry)),
+          messages: pane.messages.map((entry) => (entry.id === target.id ? { ...entry, preferred: value } : entry)),
         }));
-      apply(preferred);
-      try {
-        await api(`/conversations/${conversationId}/messages/${message.id}`, { method: 'PATCH', json: { preferred } });
-      } catch {
-        apply(message.preferred);
-      }
+      const save = async (target: Message, value: boolean) => {
+        apply(target, value);
+        try {
+          await api(`/conversations/${conversationId}/messages/${target.id}`, { method: 'PATCH', json: { preferred: value } });
+        } catch {
+          apply(target, target.preferred);
+        }
+      };
+      await Promise.all([save(message, preferred), ...others.map((other) => save(other, false))]);
     },
 
     stop(conversationId, paneId) {
@@ -341,4 +357,8 @@ function errorMessage(conversation: ConversationDetail, paneId: string, error: s
 
 export function allMessages(runtime: ConversationRuntime | undefined): Message[] {
   return Object.values(runtime?.panes ?? {}).flatMap((pane) => pane.messages);
+}
+
+export function messagesByPaneOf(runtime: ConversationRuntime | undefined): Record<string, Message[]> {
+  return Object.fromEntries(Object.entries(runtime?.panes ?? {}).map(([paneId, pane]) => [paneId, pane.messages]));
 }

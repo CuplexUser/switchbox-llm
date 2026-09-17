@@ -22,6 +22,10 @@ export function chatRoutes({ chat, approvals }: Services): Hono {
     const hasFiles = (request.attachmentIds?.length ?? 0) > 0;
     if (request.action === 'send' && !request.content?.trim() && !hasFiles) throw badRequest('Message is empty');
     if (request.action === 'edit' && !request.content?.trim()) throw badRequest('Message is empty');
+    const ids = request.messageIds;
+    if (ids !== undefined && (typeof ids !== 'object' || ids === null || Array.isArray(ids) || Object.values(ids).some((id) => typeof id !== 'string'))) {
+      throw badRequest('messageIds must map pane ids to message ids');
+    }
 
     const controllers = new Map<string, AbortController>();
     runs.set(request.runId, controllers);

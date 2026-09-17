@@ -340,7 +340,10 @@ export interface StreamRequest {
   content: string | null;
   attachmentIds?: string[];
   paneIds: string[];
+  /** edit, with one pane: the user message to rewrite. */
   messageId?: string;
+  /** edit, with several panes: the user message to rewrite in each pane, by pane id. */
+  messageIds?: Record<string, string>;
 }
 
 export interface ApprovalRequest {

@@ -263,6 +263,26 @@ describe('regenerate and edit', () => {
     expect(rows[0]?.id).toBe(firstUser);
     expect(provider.requests.at(-1)?.messages).toEqual([{ role: 'user', content: 'uno' }]);
   });
+
+  it('edits the same message in several panes at once', async () => {
+    const provider = new FakeProvider(() => [{ type: 'text', text: 'ok' }]);
+    const services = setup(provider);
+    const { conversation, pane } = await seedConversation(services.repos, { useMemory: false });
+    const { id: _id, createdAt: _created, updatedAt: _updated, ...fields } = pane;
+    const second = await services.repos.panes.create({ ...fields, position: 1 });
+    await send(services, conversation.id, [pane.id, second.id], 'one');
+
+    const firstOf = async (paneId: string) => (await services.store.list(conversation, paneId))[0]?.id ?? '';
+    const messageIds = { [pane.id]: await firstOf(pane.id), [second.id]: await firstOf(second.id) };
+    await send(services, conversation.id, [pane.id, second.id], 'uno', { action: 'edit', messageIds });
+    for (const paneId of [pane.id, second.id]) {
+      expect((await services.store.list(conversation, paneId)).map((row) => row.content)).toEqual(['uno', 'ok']);
+    }
+
+    await expect(send(services, conversation.id, [pane.id, second.id], 'dos', { action: 'edit', messageId: messageIds[pane.id] })).rejects.toThrow(
+      'Name the message to edit in each pane',
+    );
+  });
 });
 
 describe('attachments', () => {

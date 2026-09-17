@@ -1,14 +1,19 @@
+import BuildOutlinedIcon from '@mui/icons-material/BuildOutlined';
+import CallSplitRoundedIcon from '@mui/icons-material/CallSplitRounded';
 import CheckRoundedIcon from '@mui/icons-material/CheckRounded';
 import ContentCopyRoundedIcon from '@mui/icons-material/ContentCopyRounded';
+import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import ExpandMoreRoundedIcon from '@mui/icons-material/ExpandMoreRounded';
 import ReplayRoundedIcon from '@mui/icons-material/ReplayRounded';
-import BuildOutlinedIcon from '@mui/icons-material/BuildOutlined';
+import StarBorderRoundedIcon from '@mui/icons-material/StarBorderRounded';
+import StarRoundedIcon from '@mui/icons-material/StarRounded';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import ButtonBase from '@mui/material/ButtonBase';
 import Collapse from '@mui/material/Collapse';
 import IconButton from '@mui/material/IconButton';
+import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { memo, useState } from 'react';
@@ -28,10 +33,89 @@ const FINISH_NOTES: Record<string, string> = {
   refusal: 'The model declined',
 };
 
-export function UserMessage({ message }: { message: Message }) {
-  const files = (message.attachments ?? []).map((ref) => ({ key: ref.id, id: ref.id, name: ref.name, size: ref.size, kind: ref.kind }));
+function EditBox({
+  initial,
+  paneCount,
+  onCancel,
+  onSubmit,
+}: {
+  initial: string;
+  paneCount: number;
+  onCancel: () => void;
+  onSubmit: (content: string) => void;
+}) {
+  const [value, setValue] = useState(initial);
+  const changed = value.trim() !== '' && value !== initial;
   return (
-    <Box sx={{ alignSelf: 'flex-end', maxWidth: '88%', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 0.75 }}>
+    <Box sx={{ alignSelf: 'stretch', display: 'flex', flexDirection: 'column', gap: 1 }}>
+      <TextField
+        autoFocus
+        multiline
+        minRows={2}
+        maxRows={16}
+        value={value}
+        onChange={(event) => setValue(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') onCancel();
+          if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && changed) onSubmit(value);
+        }}
+        slotProps={{ htmlInput: { 'aria-label': 'Edit message' } }}
+      />
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        <Typography variant="caption" sx={{ flex: 1, color: 'var(--sb-text-faint)' }}>
+          Later messages are replaced{paneCount > 1 ? ` in ${paneCount} panes` : ''}.
+        </Typography>
+        <Button size="small" color="inherit" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button size="small" variant="contained" disabled={!changed} onClick={() => onSubmit(value)}>
+          Send
+        </Button>
+      </Box>
+    </Box>
+  );
+}
+
+export function UserMessage({
+  message,
+  editPaneCount = 1,
+  onEdit,
+}: {
+  message: Message;
+  /** How many panes an edit rewrites. */
+  editPaneCount?: number;
+  /** Missing while the message can't be edited, such as during a reply. */
+  onEdit?: (content: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const files = (message.attachments ?? []).map((ref) => ({ key: ref.id, id: ref.id, name: ref.name, size: ref.size, kind: ref.kind }));
+  if (editing && onEdit) {
+    return (
+      <EditBox
+        initial={message.content}
+        paneCount={editPaneCount}
+        onCancel={() => setEditing(false)}
+        onSubmit={(content) => {
+          setEditing(false);
+          onEdit(content);
+        }}
+      />
+    );
+  }
+  return (
+    <Box
+      id={`message-${message.id}`}
+      sx={{
+        alignSelf: 'flex-end',
+        maxWidth: '88%',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'flex-end',
+        gap: 0.75,
+        scrollMarginTop: 16,
+        '&:hover .sb-actions, &:focus-within .sb-actions': { opacity: 1 },
+      }}
+    >
       {files.length > 0 && <AttachmentChips items={files} />}
       {message.content && (
         <Box
@@ -48,6 +132,15 @@ export function UserMessage({ message }: { message: Message }) {
           }}
         >
           {message.content}
+        </Box>
+      )}
+      {onEdit && message.content && (
+        <Box className="sb-actions" sx={{ mt: -0.5, opacity: { xs: 1, md: 0 }, transition: 'opacity 120ms ease' }}>
+          <Tooltip title={editPaneCount > 1 ? `Edit and send again to ${editPaneCount} panes` : 'Edit and send again'}>
+            <IconButton size="small" aria-label="Edit message" onClick={() => setEditing(true)}>
+              <EditOutlinedIcon sx={{ fontSize: 16 }} />
+            </IconButton>
+          </Tooltip>
         </Box>
       )}
     </Box>
@@ -179,22 +272,48 @@ export const AssistantMessage = memo(function AssistantMessage({
   paneModel,
   canRegenerate,
   onRegenerate,
+  onRetryWith,
+  onBranch,
+  onPreferred,
 }: {
   message: Message;
   paneModel: string;
   canRegenerate: boolean;
   onRegenerate: () => void;
+  /** Offered on a failed reply: opens a model picker anchored to the button. */
+  onRetryWith?: (anchor: HTMLElement) => void;
+  onBranch?: () => void;
+  /** Present in chats with several panes, where one reply can be marked as the best. */
+  onPreferred?: (preferred: boolean) => void;
 }) {
   const [copied, setCopied] = useState(false);
   const note = message.finishReason ? FINISH_NOTES[message.finishReason] : undefined;
 
   return (
-    <Box sx={{ '&:hover .sb-actions, &:focus-within .sb-actions': { opacity: 1 } }}>
+    <Box id={`message-${message.id}`} sx={{ scrollMarginTop: 16, '&:hover .sb-actions, &:focus-within .sb-actions': { opacity: 1 } }}>
       {message.reasoning && <Reasoning text={message.reasoning} />}
       {message.activity && <ActivityLog items={message.activity.items} sources={message.activity.sources} />}
       {message.content && <Markdown text={message.content} />}
       {message.error && (
-        <Alert severity="error" variant="outlined" sx={{ mt: message.content ? 1.5 : 0, fontSize: '0.8125rem' }}>
+        <Alert
+          severity="error"
+          variant="outlined"
+          sx={{ mt: message.content ? 1.5 : 0, fontSize: '0.8125rem' }}
+          action={
+            canRegenerate && (
+              <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                <Button size="small" color="inherit" onClick={onRegenerate}>
+                  Retry
+                </Button>
+                {onRetryWith && (
+                  <Button size="small" color="inherit" onClick={(event) => onRetryWith(event.currentTarget)}>
+                    Try another model
+                  </Button>
+                )}
+              </Box>
+            )
+          }
+        >
           {message.error}
         </Alert>
       )}
@@ -207,7 +326,28 @@ export const AssistantMessage = memo(function AssistantMessage({
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <Meta message={message} showModel={message.model !== paneModel} />
         </Box>
+        {onPreferred && message.preferred && (
+          <Tooltip title="Marked as the best reply. Click to unmark.">
+            <IconButton size="small" aria-label="Unmark best reply" aria-pressed onClick={() => onPreferred(false)} sx={{ color: 'warning.main' }}>
+              <StarRoundedIcon sx={{ fontSize: 18 }} />
+            </IconButton>
+          </Tooltip>
+        )}
         <Box className="sb-actions" sx={{ display: 'flex', opacity: { xs: 1, md: 0 }, transition: 'opacity 120ms ease' }}>
+          {onPreferred && !message.preferred && !message.error && (
+            <Tooltip title="Mark as the best reply">
+              <IconButton size="small" aria-label="Mark as best reply" aria-pressed={false} onClick={() => onPreferred(true)}>
+                <StarBorderRoundedIcon sx={{ fontSize: 18 }} />
+              </IconButton>
+            </Tooltip>
+          )}
+          {onBranch && (
+            <Tooltip title="Branch into a new chat from here">
+              <IconButton size="small" aria-label="Branch into a new chat" onClick={onBranch}>
+                <CallSplitRoundedIcon sx={{ fontSize: 17 }} />
+              </IconButton>
+            </Tooltip>
+          )}
           {message.content && (
             <Tooltip title={copied ? 'Copied' : 'Copy reply'}>
               <IconButton
@@ -224,7 +364,7 @@ export const AssistantMessage = memo(function AssistantMessage({
               </IconButton>
             </Tooltip>
           )}
-          {canRegenerate && (
+          {canRegenerate && !message.error && (
             <Tooltip title="Regenerate">
               <IconButton size="small" aria-label="Regenerate reply" onClick={onRegenerate}>
                 <ReplayRoundedIcon sx={{ fontSize: 17 }} />

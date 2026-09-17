@@ -1,10 +1,12 @@
 import CleaningServicesOutlinedIcon from '@mui/icons-material/CleaningServicesOutlined';
+import CenterFocusStrongOutlinedIcon from '@mui/icons-material/CenterFocusStrongOutlined';
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
 import ExpandMoreRoundedIcon from '@mui/icons-material/ExpandMoreRounded';
 import MoreVertRoundedIcon from '@mui/icons-material/MoreVertRounded';
 import StopRoundedIcon from '@mui/icons-material/StopRounded';
 import TuneRoundedIcon from '@mui/icons-material/TuneRounded';
 import VisibilityOutlinedIcon from '@mui/icons-material/VisibilityOutlined';
+import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import ButtonBase from '@mui/material/ButtonBase';
 import IconButton from '@mui/material/IconButton';
@@ -13,13 +15,15 @@ import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router';
 import { PROVIDER_LABELS, type ConversationDetail, type Pane as PaneData } from '../../../shared/types.ts';
-import { useModels, usePrompts, useRemovePane, useUpdatePane } from '../../api/hooks.ts';
+import { useBranchConversation, useModels, usePrompts, useRemovePane, useUpdatePane } from '../../api/hooks.ts';
 import { ConfirmDialog } from '../../components/ConfirmDialog.tsx';
 import { ModelPicker } from '../../components/ModelPicker.tsx';
 import { ProviderMark } from '../../components/ProviderMark.tsx';
-import { useChatStore, type PaneRuntime } from '../../stores/chat.ts';
+import { editCountKey } from '../../lib/turns.ts';
+import { messagesByPaneOf, useChatStore, type PaneRuntime } from '../../stores/chat.ts';
 import { channelSoftVar, channelVar } from '../../theme/theme.ts';
 import { AssistantMessage, LiveMessage, UserMessage } from './MessageView.tsx';
 import { PaneSettingsDialog } from './PaneSettingsDialog.tsx';
@@ -33,28 +37,44 @@ export function Pane({
   index,
   canRemove,
   showHeader = true,
+  onSendOnlyHere,
 }: {
   conversation: ConversationDetail;
   pane: PaneData;
   index: number;
   canRemove: boolean;
   showHeader?: boolean;
+  /** Skips the other panes when sending, to continue the chat with this model. */
+  onSendOnlyHere?: () => void;
 }) {
   const runtime = useChatStore((state) => state.conversations[conversation.id]?.panes[pane.id]) ?? EMPTY;
   const running = useChatStore((state) => Boolean(state.conversations[conversation.id]?.runId));
   const regenerate = useChatStore((state) => state.regenerate);
+  const edit = useChatStore((state) => state.edit);
+  const setPreferred = useChatStore((state) => state.setPreferred);
+  const editCounts = useChatStore((state) => editCountKey(messagesByPaneOf(state.conversations[conversation.id]), pane.id));
   const stop = useChatStore((state) => state.stop);
   const clearPane = useChatStore((state) => state.clearPane);
   const models = useModels();
   const prompts = usePrompts();
   const updatePane = useUpdatePane();
   const removePane = useRemovePane();
+  const branch = useBranchConversation();
+  const navigate = useNavigate();
+  const { hash } = useLocation();
 
   const [pickerAnchor, setPickerAnchor] = useState<HTMLElement | null>(null);
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const [retryAnchor, setRetryAnchor] = useState<HTMLElement | null>(null);
+  const comparing = conversation.panes.length > 1;
+
+  const editCountById = useMemo(
+    () => new Map(editCounts.split(',').filter(Boolean).map((entry) => [entry.slice(0, entry.lastIndexOf(':')), Number(entry.slice(entry.lastIndexOf(':') + 1))])),
+    [editCounts],
+  );
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const pinnedToBottom = useRef(true);
@@ -77,6 +97,19 @@ export function Pane({
     seenCount.current = messageCount;
     if (pinnedToBottom.current) element.scrollTop = element.scrollHeight;
   });
+
+  // A link to a message, such as a search result, scrolls to it once the message has loaded.
+  const jumped = useRef<string | null>(null);
+  const hasTarget = hash.startsWith('#message-') && runtime.messages.some((message) => `#message-${message.id}` === hash);
+  useEffect(() => {
+    if (!hasTarget || jumped.current === hash) return;
+    const target = scrollRef.current?.querySelector<HTMLElement>(hash);
+    if (!target) return;
+    jumped.current = hash;
+    pinnedToBottom.current = false;
+    target.scrollIntoView({ block: 'start' });
+    target.animate([{ backgroundColor: 'var(--sb-sunken)' }, { backgroundColor: 'transparent' }], { duration: 1600 });
+  }, [hash, hasTarget]);
 
   return (
     <Box
@@ -180,6 +213,13 @@ export function Pane({
             py: 2.5,
           }}
         >
+          {(branch.error || updatePane.error) && (
+            <Alert severity="error" onClose={() => (branch.error ? branch.reset() : updatePane.reset())}>
+              {branch.error
+                ? `Couldn’t branch this chat: ${branch.error.message}`
+                : `Couldn’t change the model: ${updatePane.error?.message}`}
+            </Alert>
+          )}
           {runtime.messages.length === 0 && !runtime.live && (
             <Box sx={{ py: 6, textAlign: 'center', color: 'var(--sb-text-faint)' }}>
               <Box
@@ -191,7 +231,12 @@ export function Pane({
           )}
           {runtime.messages.map((message) =>
             message.role === 'user' ? (
-              <UserMessage key={message.id} message={message} />
+              <UserMessage
+                key={message.id}
+                message={message}
+                editPaneCount={editCountById.get(message.id) ?? 1}
+                onEdit={running ? undefined : (content) => void edit(conversation, pane.id, message.id, content)}
+              />
             ) : (
               <AssistantMessage
                 key={message.id}
@@ -199,6 +244,17 @@ export function Pane({
                 paneModel={pane.model}
                 canRegenerate={!running && message.id === lastAssistant?.id}
                 onRegenerate={() => void regenerate(conversation, pane.id)}
+                onRetryWith={setRetryAnchor}
+                onBranch={
+                  running || message.error
+                    ? undefined
+                    : () =>
+                        branch.mutate(
+                          { conversationId: conversation.id, paneId: pane.id, messageId: message.id },
+                          { onSuccess: (created) => void navigate(`/c/${created.id}`) },
+                        )
+                }
+                onPreferred={comparing ? (preferred) => void setPreferred(conversation.id, message, preferred) : undefined}
               />
             ),
           )}
@@ -213,6 +269,16 @@ export function Pane({
         selected={pane}
         onSelect={(ref) => updatePane.mutate({ id: pane.id, ...ref })}
       />
+      <ModelPicker
+        open={Boolean(retryAnchor)}
+        anchorEl={retryAnchor}
+        onClose={() => setRetryAnchor(null)}
+        selected={pane}
+        onSelect={(ref) =>
+          // The pane keeps the new model, so later messages go to it too.
+          updatePane.mutate({ id: pane.id, ...ref }, { onSuccess: () => void regenerate(conversation, pane.id) })
+        }
+      />
 
       <Menu anchorEl={menuAnchor} open={Boolean(menuAnchor)} onClose={() => setMenuAnchor(null)}>
         <MenuItem
@@ -226,6 +292,19 @@ export function Pane({
           </ListItemIcon>
           View assembled prompt
         </MenuItem>
+        {onSendOnlyHere && (
+          <MenuItem
+            onClick={() => {
+              setMenuAnchor(null);
+              onSendOnlyHere();
+            }}
+          >
+            <ListItemIcon>
+              <CenterFocusStrongOutlinedIcon fontSize="small" />
+            </ListItemIcon>
+            Send only to this pane
+          </MenuItem>
+        )}
         <MenuItem
           disabled={running || runtime.messages.length === 0}
           onClick={() => {
