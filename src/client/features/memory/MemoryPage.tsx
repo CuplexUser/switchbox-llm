@@ -1,8 +1,10 @@
+import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
 import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
 import Alert from '@mui/material/Alert';
 import Autocomplete from '@mui/material/Autocomplete';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
+import IconButton from '@mui/material/IconButton';
 import InputBase from '@mui/material/InputBase';
 import Skeleton from '@mui/material/Skeleton';
 import Tab from '@mui/material/Tab';
@@ -12,7 +14,8 @@ import Typography from '@mui/material/Typography';
 import { useMemo, useState } from 'react';
 import { Link as RouterLink } from 'react-router';
 import type { Memory, MemoryStatus, SystemPrompt } from '../../../shared/types.ts';
-import { useCreateMemory, useMemories, usePrompts, useSettings } from '../../api/hooks.ts';
+import { useCreateMemory, useMemories, usePrompts, useSettings, useSuggestionStatus } from '../../api/hooks.ts';
+import { formatRelative } from '../../lib/format.ts';
 import { MemoryHistoryDialog } from './MemoryHistoryDialog.tsx';
 import { MemoryReview } from './MemoryReview.tsx';
 import { MemoryRow } from './MemoryRow.tsx';
@@ -70,6 +73,35 @@ function AddMemory({ categories, profiles }: { categories: string[]; profiles: S
   );
 }
 
+/** The last suggestion run failed; hidden again once a run succeeds or the user dismisses this error. */
+function SuggestionFailure() {
+  const status = useSuggestionStatus();
+  const [dismissedAt, setDismissedAt] = useState<string | null>(null);
+  const { lastError, lastErrorAt } = status.data ?? { lastError: null, lastErrorAt: null };
+  if (!lastError || !lastErrorAt || dismissedAt === lastErrorAt) return null;
+
+  return (
+    <Alert
+      severity="warning"
+      variant="outlined"
+      sx={{ mt: 2 }}
+      action={
+        // Alert drops its own close button when given an action, so both go here.
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+          <Button component={RouterLink} to="/settings/memory" size="small" color="inherit" sx={{ whiteSpace: 'nowrap' }}>
+            Settings
+          </Button>
+          <IconButton size="small" color="inherit" aria-label="Dismiss" onClick={() => setDismissedAt(lastErrorAt)}>
+            <CloseRoundedIcon fontSize="small" />
+          </IconButton>
+        </Box>
+      }
+    >
+      Suggestions failed {formatRelative(lastErrorAt)}: {lastError}
+    </Alert>
+  );
+}
+
 const TABS: { status: MemoryStatus; label: string }[] = [
   { status: 'active', label: 'Memories' },
   { status: 'pending', label: 'Suggestions' },
@@ -123,6 +155,8 @@ export function MemoryPage() {
         </Typography>
 
         <AddMemory categories={categories} profiles={profiles} />
+
+        {memorySettings?.autoSuggest && <SuggestionFailure />}
 
         {memorySettings && !memorySettings.autoSuggest && (
           <Alert

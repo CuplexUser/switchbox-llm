@@ -145,7 +145,8 @@ The system prompt tells the model it has long-term memory, so it uses these tool
 remember.
 
 Under Settings → Memory you can also have a model read each exchange and suggest facts. Those wait in
-Suggestions until you keep or dismiss them.
+Suggestions until you keep or dismiss them. If the suggestion model fails, the Memory page shows the error until
+the next run works or you dismiss it.
 
 On the Memory page:
 
@@ -194,7 +195,7 @@ The server binds to `127.0.0.1` only. It also refuses API requests that aren't a
 | `npm start` | Runs the API and serves `dist/` |
 | `npm run lint` | Oxlint |
 | `npm run typecheck` | TypeScript, no emit |
-| `npm test` | Vitest |
+| `npm test` | Vitest: server tests, plus client tests for the chat store and components (jsdom and Testing Library) |
 
 ## Keyboard shortcuts
 
@@ -245,6 +246,7 @@ Server logs have one line per event, with fields such as the run and pane id, so
 start to finish.
 
 Settings → Data exports and imports everything except API keys as JSON, including attachments and tool traces.
+Imported chats, profiles and memories keep their original dates.
 
 ## Roadmap
 

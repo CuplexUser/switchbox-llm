@@ -4,7 +4,7 @@ import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import { createApi, createServices } from './app.ts';
 import { runMigrations } from './db/migrations.ts';
-import { openRepos } from './db/repos.ts';
+import { allRepos, openRepos } from './db/repos.ts';
 import { config } from './env.ts';
 import { createLogger } from './log.ts';
 import { seedSamplePrompts } from './services/seed.ts';
@@ -46,7 +46,7 @@ const server = serve({ fetch: app.fetch, port: config.port, hostname: '127.0.0.1
 
 function shutdown(): void {
   server.close();
-  void Promise.allSettled([services.mcp.closeAll(), ...Object.values(repos).map((repo) => repo.close())]).finally(() => process.exit(0));
+  void Promise.allSettled([services.mcp.closeAll(), ...allRepos(repos).map((repo) => repo.close())]).finally(() => process.exit(0));
 }
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);

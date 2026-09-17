@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../../shared/defaults.ts';
 import { addMissingColumns } from '../db/migrate.ts';
 import { conversationSchema, messageSchema } from '../db/schemas.ts';
-import { memoryRepos, openRepos } from '../db/repos.ts';
+import { allRepos, memoryRepos, openRepos } from '../db/repos.ts';
 import { seedSamplePrompts } from '../services/seed.ts';
 import { ToolRegistry } from '../tools/registry.ts';
 import { planWeb, webTools } from '../tools/web.ts';
@@ -193,7 +193,7 @@ describe('openRepos', () => {
       const upload = await repos.attachments.create({ id: 'a1', conversationId: null, name: 'x.txt', mimeType: 'text/plain', size: 2, kind: 'text', data: new Uint8Array([104, 105]) });
       expect(Array.from((await repos.attachments.findById(upload.id))?.data ?? [])).toEqual([104, 105]);
     } finally {
-      await Promise.allSettled(Object.values(repos).map((repo) => repo.close()));
+      await Promise.allSettled(allRepos(repos).map((repo) => repo.close()));
     }
   });
 });

@@ -6,6 +6,17 @@ import { reviveDates, serialize } from '../services/serialize.ts';
 
 const DATE_FIELDS = ['createdAt', 'updatedAt'];
 
+/** Date fields each table stores, filled with the import time when a bundle leaves them out. */
+const STORED_DATES: Record<string, string[]> = {
+  conversations: DATE_FIELDS,
+  panes: DATE_FIELDS,
+  systemPrompts: DATE_FIELDS,
+  memories: DATE_FIELDS,
+  messages: ['createdAt'],
+  memoryHistory: ['createdAt'],
+  attachments: ['createdAt'],
+};
+
 /** Fields added after the first export format, filled in for older bundles. */
 const LATER_FIELDS: Record<string, Record<string, unknown>> = {
   conversations: { toolGroups: null },
@@ -52,8 +63,12 @@ export function dataRoutes({ repos, settings, usage, store }: Services): Hono {
       convert: (row: Record<string, unknown>) => Record<string, unknown> = (row) => row,
     ): Promise<number> {
       let count = 0;
+      const now = new Date();
+      const dates = Object.fromEntries((STORED_DATES[table] ?? []).map((field) => [field, now]));
       for (const row of rows ?? []) {
-        const record = convert(reviveDates({ ...LATER_FIELDS[table], ...(row as Record<string, unknown>) }, DATE_FIELDS)) as unknown as T;
+        const revived = reviveDates({ ...LATER_FIELDS[table], ...(row as Record<string, unknown>) }, DATE_FIELDS);
+        for (const [field, fallback] of Object.entries(dates)) revived[field] ??= fallback;
+        const record = convert(revived) as unknown as T;
         if (typeof record.id !== 'string' || (await repo.findById(record.id))) continue;
         await repo.create(record);
         count++;
@@ -62,13 +77,14 @@ export function dataRoutes({ repos, settings, usage, store }: Services): Hono {
     }
 
     const imported = {
-      conversations: await insert(repos.conversations, bundle.conversations, 'conversations'),
-      panes: await insert(repos.panes, bundle.panes, 'panes'),
+      // The undated repos store createdAt and updatedAt as given, so imported chats keep their dates.
+      conversations: await insert(repos.undated.conversations, bundle.conversations, 'conversations'),
+      panes: await insert(repos.undated.panes, bundle.panes, 'panes'),
       messages: await insert(repos.messages, bundle.messages, 'messages'),
-      systemPrompts: await insert(repos.systemPrompts, bundle.systemPrompts, 'systemPrompts'),
-      memories: await insert(repos.memories, bundle.memories, 'memories'),
+      systemPrompts: await insert(repos.undated.systemPrompts, bundle.systemPrompts, 'systemPrompts'),
+      memories: await insert(repos.undated.memories, bundle.memories, 'memories'),
       memoryHistory: await insert(repos.memoryHistory, bundle.memoryHistory, 'memoryHistory'),
-      attachments: await insert(repos.attachments, bundle.attachments, 'attachments', (row) => ({
+      attachments: await insert(repos.undated.attachments, bundle.attachments, 'attachments', (row) => ({
         ...row,
         data: Buffer.from(String(row.data ?? ''), 'base64'),
       })),

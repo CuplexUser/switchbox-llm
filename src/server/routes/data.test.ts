@@ -34,3 +34,32 @@ describe('memory history', () => {
     expect(response.status).toBe(400);
   });
 });
+
+describe('import', () => {
+  it('keeps the dates of imported chats, panes, profiles and memories', async () => {
+    const source = createApi(createServices(memoryRepos()));
+    await source.request('http://localhost:8787/memories', json({ content: 'Lives in Oslo' }));
+    await source.request('http://localhost:8787/prompts', json({ name: 'Researcher', content: 'Cite sources.' }));
+    const created = await source.request('http://localhost:8787/conversations', json({ panes: [{ provider: 'openrouter', model: 'a/model' }] }));
+    expect(created.status).toBe(201);
+
+    const old = '2020-01-02T03:04:05.000Z';
+    const bundle = (await (await source.request('http://localhost:8787/data/export')).json()) as ExportBundle;
+    const tables = [bundle.conversations, bundle.panes, bundle.systemPrompts, bundle.memories] as { createdAt: string; updatedAt: string }[][];
+    for (const rows of tables) {
+      expect(rows.length).toBeGreaterThan(0);
+      for (const row of rows) Object.assign(row, { createdAt: old, updatedAt: old });
+    }
+
+    const target = createApi(createServices(memoryRepos()));
+    expect((await target.request('http://localhost:8787/data/import', json(bundle))).status).toBe(200);
+    const again = (await (await target.request('http://localhost:8787/data/export')).json()) as ExportBundle;
+    for (const table of ['conversations', 'panes', 'memories'] as const) {
+      for (const row of again[table] as { createdAt: string; updatedAt: string }[]) {
+        expect([table, row.createdAt, row.updatedAt]).toEqual([table, old, old]);
+      }
+    }
+    const researcher = again.systemPrompts.find((prompt) => prompt.name === 'Researcher');
+    expect(researcher).toMatchObject({ createdAt: old, updatedAt: old });
+  });
+});

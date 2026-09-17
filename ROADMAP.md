@@ -9,9 +9,8 @@ _server done_ have their API and tests in place and are waiting for their UI.
 - **Phase A (agents and tools):** done
 - **Phase B (chat features):** done
 - **Phase C (memory):** done
-- **Phase D (security):** done except the Memory page notice for suggestion failures
-- **Phase E (quality):** CI, loop tests, the chat service split and structured logs done; client tests and
-  splitting large client files are open, and imports need to keep their dates
+- **Phase D (security):** done
+- **Phase E (quality):** done
 
 ## A. Agents and tools
 
@@ -75,19 +74,20 @@ _server done_ have their API and tests in place and are waiting for their UI.
       the pane, and the unscoped `DELETE /messages/:id` is gone.
 - [x] **D3. Prompt injection**: web and MCP output is wrapped in `<tool_output>` tags, with guidance in the
       system prompt.
-- [ ] **D4. Show memory suggestion failures** on the Memory page. _Server done:_
-      `GET /api/memories/suggestion-status`.
+- [x] **D4. Show memory suggestion failures** on the Memory page, from `GET /api/memories/suggestion-status`,
+      until the next run works or the notice is dismissed.
 - [x] **D5. Versioned migrations** in `src/server/db/migrations.ts`.
 
 ## E. Code quality and tooling
 
-- [ ] **E1. Client tests** with Vitest and Testing Library, starting with `stores/chat.ts` and `ModelPicker`.
+- [x] **E1. Client tests** with Vitest and Testing Library: `stores/chat.ts` (streaming, failures, regenerate,
+      edit, best reply) and `ModelPicker` (ordering, filtering, keyboard, ids, favorites) under jsdom.
 - [x] **E2. Tool loop tests** with a fake provider: approvals, stopping mid-tool, round limit, parallel limit,
       rejected tools, history replay, regenerate and edit, profiles and attachments.
 - [x] **E3. CI**: GitHub Actions running lint, typecheck, test and build on Node 22 and 24.
 - [x] **E4. Split `ChatService.runPane`** into `prepareTurn`, `streamStep` and `executeTools`.
-- [ ] **E5. Split large client files** (`UsagePage`, `Sidebar`, `ChatPage`) when they are next changed.
+- [x] **E5. Split large client files**: `UsagePage` into stats, model table and helpers; `Sidebar` into the chat
+      item and footer; `ChatPage` into the header and the pane chips under the composer.
 - [x] **E6. Structured logging** with run and pane ids (`LOG_LEVEL`, `LOG_FORMAT`).
-- [ ] **E7. Keep dates on import** (S). Importing resets `createdAt` to the import time for conversations, panes,
-      profiles, memories and attachments, because repolayer sets it on create when timestamps are on. Messages and
-      memory history already set their own dates.
+- [x] **E7. Keep dates on import**. repolayer stamps `createdAt` and `updatedAt` on create, so imports write
+      through a second set of repos over the same tables with timestamps off (`repos.undated`).

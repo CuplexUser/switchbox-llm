@@ -1,114 +1,22 @@
-import AddRoundedIcon from '@mui/icons-material/AddRounded';
-import CheckRoundedIcon from '@mui/icons-material/CheckRounded';
-import HistoryToggleOffRoundedIcon from '@mui/icons-material/HistoryToggleOffRounded';
-import PsychologyAltOutlinedIcon from '@mui/icons-material/PsychologyAltOutlined';
-import PublicRoundedIcon from '@mui/icons-material/PublicRounded';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
-import ButtonBase from '@mui/material/ButtonBase';
-import InputBase from '@mui/material/InputBase';
 import Skeleton from '@mui/material/Skeleton';
 import Tab from '@mui/material/Tab';
 import Tabs from '@mui/material/Tabs';
-import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Link as RouterLink, useLocation, useParams } from 'react-router';
-import { MAX_PANES } from '../../../shared/defaults.ts';
-import type { ConversationDetail } from '../../../shared/types.ts';
-import {
-  useAddPane,
-  useConversation,
-  useConversationMessages,
-  useModels,
-  useUpdateConversation,
-} from '../../api/hooks.ts';
+import { useAddPane, useConversation, useConversationMessages, useModels } from '../../api/hooks.ts';
 import { ModelPicker } from '../../components/ModelPicker.tsx';
 import { shortModel } from '../../lib/format.ts';
 import { useChatStore } from '../../stores/chat.ts';
-import { channelSoftVar, channelVar } from '../../theme/theme.ts';
-import { ChatActionsMenu } from './ChatActionsMenu.tsx';
+import { channelVar } from '../../theme/theme.ts';
+import { ChatHeader } from './ChatHeader.tsx';
 import { Composer } from './Composer.tsx';
 import { Pane } from './Pane.tsx';
-import { ToolsMenu } from './ToolsMenu.tsx';
-
-function ToggleChip({
-  on,
-  onClick,
-  icon,
-  label,
-  tooltip,
-}: {
-  on: boolean;
-  onClick: () => void;
-  icon: React.ReactNode;
-  label: string;
-  tooltip: string;
-}) {
-  return (
-    <Tooltip title={tooltip} describeChild>
-      <ButtonBase
-        onClick={onClick}
-        aria-pressed={on}
-        sx={{
-          gap: 0.75,
-          px: 1,
-          height: 28,
-          borderRadius: '6px',
-          fontSize: '0.75rem',
-          fontWeight: 550,
-          border: '1px solid',
-          borderColor: on ? 'var(--sb-border-strong)' : 'var(--sb-border)',
-          color: on ? 'var(--sb-text)' : 'var(--sb-text-faint)',
-          backgroundColor: on ? 'var(--sb-surface)' : 'transparent',
-          '&:hover': { color: 'var(--sb-text)' },
-          '&:focus-visible': { outline: '2px solid var(--sb-ink)' },
-        }}
-      >
-        {icon}
-        {label}
-      </ButtonBase>
-    </Tooltip>
-  );
-}
-
-function TitleField({ conversation }: { conversation: ConversationDetail }) {
-  const update = useUpdateConversation();
-  const [value, setValue] = useState(conversation.title);
-
-  function commit(): void {
-    const next = value.trim();
-    if (next && next !== conversation.title) update.mutate({ id: conversation.id, title: next });
-    else setValue(conversation.title);
-  }
-
-  return (
-    <InputBase
-      value={value}
-      onChange={(event) => setValue(event.target.value)}
-      onBlur={commit}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter') (event.target as HTMLInputElement).blur();
-        if (event.key === 'Escape') {
-          setValue(conversation.title);
-          (event.target as HTMLInputElement).blur();
-        }
-      }}
-      inputProps={{ 'aria-label': 'Conversation title' }}
-      sx={{
-        flex: 1,
-        minWidth: 80,
-        fontWeight: 600,
-        fontSize: '0.9375rem',
-        '& input': { px: 0.75, py: 0.5, borderRadius: '6px', textOverflow: 'ellipsis' },
-        '& input:hover': { backgroundColor: 'action.hover' },
-        '& input:focus': { backgroundColor: 'var(--sb-canvas)', outline: '1px solid var(--sb-ink)' },
-      }}
-    />
-  );
-}
+import { PaneTargets } from './PaneTargets.tsx';
 
 export function ChatPage() {
   const { conversationId } = useParams();
@@ -120,7 +28,6 @@ function ChatView({ conversationId }: { conversationId: string }) {
   const conversation = useConversation(conversationId);
   const messages = useConversationMessages(conversationId);
   const models = useModels();
-  const updateConversation = useUpdateConversation();
   const addPane = useAddPane();
   const hydrate = useChatStore((state) => state.hydrate);
   const send = useChatStore((state) => state.send);
@@ -177,81 +84,12 @@ function ChatView({ conversationId }: { conversationId: string }) {
     );
   }
 
-  function togglePersist(detail: ConversationDetail): void {
-    // The server writes what was said so far when a temporary chat is saved.
-    updateConversation.mutate({ id: detail.id, persist: !detail.persist });
-  }
-
   const noTargets = targets.length === 0;
   const readyModels = new Set((models.data?.models ?? []).map((model) => `${model.provider}:${model.model}`));
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-      <Box
-        component="header"
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 1,
-          height: 52,
-          flexShrink: 0,
-          pl: 'calc(var(--sb-shell-inset) + 12px)',
-          pr: 1.5,
-          borderBottom: '1px solid var(--sb-border)',
-          backgroundColor: 'var(--sb-canvas)',
-        }}
-      >
-        <TitleField key={data.title} conversation={data} />
-        <ToggleChip
-          on={data.persist}
-          onClick={() => togglePersist(data)}
-          icon={data.persist ? <CheckRoundedIcon sx={{ fontSize: 15 }} /> : <HistoryToggleOffRoundedIcon sx={{ fontSize: 15 }} />}
-          label={data.persist ? 'Saved' : 'Temporary'}
-          tooltip={
-            data.persist
-              ? 'Messages are saved to the database. Click to stop saving.'
-              : 'Nothing is saved; this chat disappears when the server restarts. Click to save it.'
-          }
-        />
-        <ToggleChip
-          on={data.useMemory}
-          onClick={() => updateConversation.mutate({ id: data.id, useMemory: !data.useMemory })}
-          icon={<PsychologyAltOutlinedIcon sx={{ fontSize: 15 }} />}
-          label={narrow ? '' : data.useMemory ? 'Memory on' : 'Memory off'}
-          tooltip={
-            data.useMemory
-              ? 'Saved memories are added to the system prompt. Click to turn off for this chat.'
-              : 'Memories are not used in this chat. Click to turn on.'
-          }
-        />
-        <ToggleChip
-          on={data.webAccess}
-          onClick={() => updateConversation.mutate({ id: data.id, webAccess: !data.webAccess })}
-          icon={<PublicRoundedIcon sx={{ fontSize: 15 }} />}
-          label={narrow ? '' : data.webAccess ? 'Web on' : 'Web off'}
-          tooltip={
-            data.webAccess
-              ? 'Models can search the web and read pages. Click to turn off for this chat.'
-              : 'Models answer without web access. Click to turn on.'
-          }
-        />
-        <ToolsMenu conversation={data} compact={narrow} />
-        <ChatActionsMenu conversation={data} />
-        <Tooltip title={panes.length >= MAX_PANES ? `Up to ${MAX_PANES} models per chat` : 'Add a model to compare'}>
-          <span>
-            <Button
-              size="small"
-              variant="outlined"
-              startIcon={<AddRoundedIcon />}
-              disabled={panes.length >= MAX_PANES || running}
-              onClick={(event) => setAddAnchor(event.currentTarget)}
-              sx={{ height: 28, whiteSpace: 'nowrap' }}
-            >
-              {narrow ? 'Model' : 'Add model'}
-            </Button>
-          </span>
-        </Tooltip>
-      </Box>
+      <ChatHeader data={data} narrow={narrow} running={running} onAddModel={setAddAnchor} />
 
       {narrow && panes.length > 1 && (
         <Tabs
@@ -317,55 +155,21 @@ function ChatView({ conversationId }: { conversationId: string }) {
             onSend={(text, attachments) => void send(data, text, targets.map((pane) => pane.id), attachments)}
             onStop={() => stop(data.id)}
             footer={
-              panes.length > 1 &&
-              panes.map((pane, index) => {
-                const on = !excluded.has(pane.id);
-                const known = readyModels.size === 0 || readyModels.has(`${pane.provider}:${pane.model}`);
-                return (
-                  <Tooltip key={pane.id} describeChild title={on ? 'Sending to this pane. Click to skip it.' : 'Skipping this pane. Click to include it.'}>
-                    <ButtonBase
-                      aria-pressed={on}
-                      onClick={() =>
-                        setExcluded((current) => {
-                          const next = new Set(current);
-                          if (next.has(pane.id)) next.delete(pane.id);
-                          else next.add(pane.id);
-                          return next;
-                        })
-                      }
-                      sx={{
-                        gap: 0.75,
-                        px: 1,
-                        height: 26,
-                        maxWidth: 200,
-                        borderRadius: '13px',
-                        fontSize: '0.75rem',
-                        fontWeight: 550,
-                        color: on ? 'var(--sb-text)' : 'var(--sb-text-faint)',
-                        backgroundColor: on ? channelSoftVar(index) : 'transparent',
-                        border: '1px solid',
-                        borderColor: on ? 'transparent' : 'var(--sb-border)',
-                        textDecoration: on ? 'none' : 'line-through',
-                        opacity: known ? 1 : 0.8,
-                        '&:focus-visible': { outline: '2px solid var(--sb-ink)' },
-                      }}
-                    >
-                      <Box
-                        sx={{
-                          width: 8,
-                          height: 8,
-                          borderRadius: '50%',
-                          flexShrink: 0,
-                          backgroundColor: on ? channelVar(index) : 'var(--sb-border-strong)',
-                        }}
-                      />
-                      <Box component="span" sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {shortModel(pane.model)}
-                      </Box>
-                    </ButtonBase>
-                  </Tooltip>
-                );
-              })
+              panes.length > 1 && (
+                <PaneTargets
+                  panes={panes}
+                  excluded={excluded}
+                  readyModels={readyModels}
+                  onToggle={(paneId) =>
+                    setExcluded((current) => {
+                      const next = new Set(current);
+                      if (next.has(paneId)) next.delete(paneId);
+                      else next.add(paneId);
+                      return next;
+                    })
+                  }
+                />
+              )
             }
           />
         </Box>
