@@ -110,7 +110,9 @@ npm run build
 npm start               # serves the built app and API on http://localhost:8787
 ```
 
-The server binds to `127.0.0.1` only.
+The server binds to `127.0.0.1` only. It also refuses API requests that aren't addressed to `localhost` or
+`127.0.0.1` (this blocks DNS rebinding) and requests sent from other websites. Request bodies must be
+`application/json`, so a web page can't submit a form to the API either.
 
 ## Scripts
 
@@ -159,3 +161,7 @@ declares to an existing database, using repolayer's own column DDL. Any other sc
 migration.
 
 Settings → Data exports and imports everything except API keys as JSON.
+
+## Roadmap
+
+Planned work is tracked in [ROADMAP.md](ROADMAP.md).

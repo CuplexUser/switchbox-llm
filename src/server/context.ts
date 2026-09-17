@@ -25,6 +25,10 @@ export function notFound(what: string): HTTPException {
 }
 
 export async function readJson<T>(c: Context): Promise<T> {
+  // A JSON content type can't be sent cross-site without a CORS preflight, which this server never grants.
+  if (!/^application\/json\b/i.test(c.req.header('content-type') ?? '')) {
+    throw new HTTPException(415, { message: 'Expected Content-Type: application/json' });
+  }
   try {
     const body: unknown = await c.req.json();
     if (typeof body !== 'object' || body === null) throw new Error('not an object');

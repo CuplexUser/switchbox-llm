@@ -11,6 +11,7 @@ import { memoryRoutes } from './routes/memories.ts';
 import { promptRoutes } from './routes/prompts.ts';
 import { settingsRoutes } from './routes/settings.ts';
 import { usageRoutes } from './routes/usage.ts';
+import { localOnly } from './security.ts';
 import { ChatService } from './services/chat.ts';
 import { MemoryService } from './services/memory.ts';
 import { SettingsService } from './services/settings.ts';
@@ -28,6 +29,7 @@ export function createServices(repos: Repos): Services {
 export function createApi(services: Services): Hono {
   const api = new Hono();
 
+  api.use('*', localOnly());
   api.get('/health', (c) => c.json({ ok: true }));
   api.route('/', settingsRoutes(services));
   api.route('/', promptRoutes(services));
