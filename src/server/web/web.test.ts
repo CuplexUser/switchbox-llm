@@ -7,7 +7,7 @@ import { DEFAULT_SETTINGS } from '../../shared/defaults.ts';
 import { addMissingColumns } from '../db/migrate.ts';
 import { conversationSchema, messageSchema } from '../db/schemas.ts';
 import { allRepos, memoryRepos, openRepos } from '../db/repos.ts';
-import { seedSamplePrompts } from '../services/seed.ts';
+import { MORE_PROMPTS, SAMPLE_PROMPTS, seedSamplePrompts } from '../services/seed.ts';
 import { ToolRegistry } from '../tools/registry.ts';
 import { planWeb, webTools } from '../tools/web.ts';
 import { assertPublicUrl, htmlToText, isPrivateAddress } from './fetch.ts';
@@ -201,12 +201,26 @@ describe('openRepos', () => {
 describe('seedSamplePrompts', () => {
   it('adds the starter prompts once, with one default', async () => {
     const repos = memoryRepos();
-    expect(await seedSamplePrompts(repos)).toBe(2);
+    expect(await seedSamplePrompts(repos)).toBe(SAMPLE_PROMPTS.length + MORE_PROMPTS.length);
     const prompts = await repos.systemPrompts.findMany();
     expect(prompts.filter((prompt) => prompt.isDefault)).toHaveLength(1);
+    expect(prompts.find((prompt) => prompt.name === 'Data analyst')).toMatchObject({ tools: ['code', 'attachments', 'time'], maxToolRounds: 12 });
 
     await repos.systemPrompts.deleteMany();
     expect(await seedSamplePrompts(repos)).toBe(0);
     expect(await repos.systemPrompts.count()).toBe(0);
+  });
+
+  it('offers later prompts to a database seeded before them, skipping names in use', async () => {
+    const repos = memoryRepos();
+    await repos.settings.create({ id: '_seed_system_prompts_v1', value: { added: 2 } });
+    await repos.systemPrompts.create({ name: 'My own', content: '', isDefault: true, tools: null, maxToolRounds: null, params: null });
+    await repos.systemPrompts.create({ name: 'tutor', content: 'Mine', isDefault: false, tools: null, maxToolRounds: null, params: null });
+
+    expect(await seedSamplePrompts(repos)).toBe(MORE_PROMPTS.length - 1);
+    const prompts = await repos.systemPrompts.findMany();
+    expect(prompts.filter((prompt) => prompt.name.toLowerCase() === 'tutor')).toHaveLength(1);
+    expect(prompts.filter((prompt) => prompt.isDefault).map((prompt) => prompt.name)).toEqual(['My own']);
+    expect(await seedSamplePrompts(repos)).toBe(0);
   });
 });

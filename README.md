@@ -15,8 +15,8 @@ in parallel.
   chat can also be temporary, in which case nothing is written. Ctrl+K searches saved messages, and a model you
   choose can write chat titles
 - **Profiles:** reusable system prompts that can also limit tools and set their own tool round limit and
-  generation settings, plus custom instructions for each pane. Two starter prompts ("General assistant" and
-  "Research analyst") are added on first run
+  generation settings, plus custom instructions for each pane. Starter profiles are added once: General
+  assistant, Research analyst, Coding assistant, Data analyst, Writing editor and Tutor. Deleted ones don't come back
 - **Web search:** models can search the web and read pages, with Tavily, Brave, or the provider's own search.
   Each reply shows what was searched and which sources were used
 - **Tools:** besides the web, a JavaScript sandbox, the current time, search across earlier chats, memory, and
