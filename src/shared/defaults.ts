@@ -1,3 +1,4 @@
+import { DEFAULT_CHAT_FONT_ID, DEFAULT_CHAT_FONT_SIZE, DEFAULT_CHAT_LINE_HEIGHT } from './chatFonts.ts';
 import type { AppSettings, GenerationParams } from './types.ts';
 
 export const MAX_PANES = 4;
@@ -17,6 +18,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
     persistByDefault: true,
     sendOnEnter: true,
     titleModel: null,
+    chatFont: DEFAULT_CHAT_FONT_ID,
+    chatFontSize: DEFAULT_CHAT_FONT_SIZE,
+    chatLineHeight: DEFAULT_CHAT_LINE_HEIGHT,
   },
   providers: {
     openrouter: { enabled: true, baseUrl: 'https://openrouter.ai/api/v1' },

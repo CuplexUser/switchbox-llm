@@ -37,6 +37,8 @@ export interface GenerationParams {
 }
 
 export type ThemeMode = 'system' | 'light' | 'dark';
+export type ChatFontSize = 'small' | 'medium' | 'large' | 'xlarge';
+export type ChatLineHeight = 'compact' | 'standard' | 'relaxed';
 
 /**
  * auto: Tavily if its key is set, else Brave, else native.
@@ -83,6 +85,10 @@ export interface AppSettings {
     sendOnEnter: boolean;
     /** Writes chat titles. Null titles chats from the first line of the first message. */
     titleModel: ModelRef | null;
+    /** Id from CHAT_FONTS used for assistant reply and reasoning text. */
+    chatFont: string;
+    chatFontSize: ChatFontSize;
+    chatLineHeight: ChatLineHeight;
   };
   providers: Record<ProviderId, ProviderSettings>;
   favorites: ModelRef[];

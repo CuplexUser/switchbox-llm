@@ -228,7 +228,7 @@ function Reasoning({ text, live }: { text: string; live?: boolean }) {
             pl: 1.5,
             borderLeft: '2px solid var(--sb-border)',
             color: 'var(--sb-text-muted)',
-            fontFamily: fonts.prose,
+            fontFamily: `var(--sb-chat-font, ${fonts.prose})`,
             fontSize: '0.875rem',
             lineHeight: 1.6,
             whiteSpace: 'pre-wrap',

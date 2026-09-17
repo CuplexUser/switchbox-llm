@@ -6,6 +6,7 @@ import { useColorScheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useEffect, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router';
+import { chatFontFamily, chatFontSizeValue, chatLineHeightValue } from '../../shared/chatFonts.ts';
 import { useSettings } from '../api/hooks.ts';
 import { CommandPalette } from './CommandPalette.tsx';
 import { Sidebar, SIDEBAR_WIDTH } from './Sidebar.tsx';
@@ -51,6 +52,9 @@ export function AppShell() {
   }, [navigate]);
 
   const density = settings.data?.general.density ?? 'comfortable';
+  const chatFont = chatFontFamily(settings.data?.general.chatFont);
+  const chatFontSize = chatFontSizeValue(settings.data?.general.chatFontSize);
+  const chatLineHeight = chatLineHeightValue(settings.data?.general.chatLineHeight);
   const sidebar = (
     <Sidebar onCollapse={wide ? () => setCollapsed(true) : () => setMobileOpen(false)} onOpenPalette={() => setPaletteOpen(true)} />
   );
@@ -61,8 +65,10 @@ export function AppShell() {
         display: 'flex',
         height: '100dvh',
         overflow: 'hidden',
-        '--sb-prose-size': density === 'compact' ? '0.9375rem' : '1rem',
+        '--sb-prose-size': chatFontSize,
         '--sb-gap': density === 'compact' ? '14px' : '22px',
+        '--sb-chat-font': chatFont,
+        '--sb-chat-line-height': chatLineHeight,
       }}
     >
       {wide ? (

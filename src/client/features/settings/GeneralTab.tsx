@@ -1,10 +1,13 @@
+import Box from '@mui/material/Box';
 import Skeleton from '@mui/material/Skeleton';
 import Switch from '@mui/material/Switch';
 import ToggleButton from '@mui/material/ToggleButton';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
+import Typography from '@mui/material/Typography';
 import type { AppSettings } from '../../../shared/types.ts';
 import { useSettings, useUpdateSettings } from '../../api/hooks.ts';
 import { ModelButton } from '../../components/ModelButton.tsx';
+import { ChatFontFields, ChatFontPreview } from './ChatFontControls.tsx';
 import { Panel, SettingRow, SettingsHeader } from './Section.tsx';
 
 export function GeneralTab() {
@@ -46,6 +49,21 @@ export function GeneralTab() {
             <ToggleButton value="compact">Compact</ToggleButton>
           </ToggleButtonGroup>
         </SettingRow>
+        <Box sx={{ py: 2, borderBottom: '1px solid var(--sb-border)', display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+          <Box>
+            <Typography variant="body2" sx={{ fontWeight: 600 }}>
+              Chat font
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+              Family, size and line height for assistant replies and reasoning.
+            </Typography>
+          </Box>
+          <ChatFontFields
+            value={general}
+            onChange={(patch) => update.mutate({ section: 'general', value: { ...general, ...patch } })}
+          />
+          <ChatFontPreview value={general} />
+        </Box>
         <SettingRow
           label="Save new chats to history"
           description="When off, new chats start as temporary and nothing is written to the database."

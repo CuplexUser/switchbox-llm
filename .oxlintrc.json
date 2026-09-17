@@ -20,7 +20,7 @@
     "no-console": ["warn", { "allow": ["warn", "error", "info"] }],
     "jsx-a11y/no-autofocus": "off",
     "jsx-a11y/prefer-tag-over-role": "off",
-    "import/no-unassigned-import": ["warn", { "allow": ["@fontsource-variable/**"] }]
+    "import/no-unassigned-import": ["warn", { "allow": ["@fontsource-variable/**", "@fontsource/**"] }]
   },
   "ignorePatterns": ["dist", "node_modules", "data"]
 }

@@ -10,6 +10,7 @@ import Tooltip from '@mui/material/Tooltip';
 import type { ReactNode } from 'react';
 import { NavLink } from 'react-router';
 import { usePendingMemoryCount, useSettings, useUpdateSettings } from '../api/hooks.ts';
+import { ChatFontButton } from './ChatFontButton.tsx';
 
 function ThemeToggle() {
   const { colorScheme } = useColorScheme();
@@ -96,6 +97,7 @@ export function SidebarFooter() {
         <Box sx={{ flex: 1 }}>
           <FooterLink to="/settings" icon={<SettingsOutlinedIcon sx={{ fontSize: 18 }} />} label="Settings" />
         </Box>
+        <ChatFontButton />
         <ThemeToggle />
       </Box>
     </Box>
