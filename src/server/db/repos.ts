@@ -85,7 +85,7 @@ export async function openRepos(file: string): Promise<Repos> {
       ...base,
       table: 'memory_history',
       schema: memoryHistorySchema,
-      timestamps: CREATED_ONLY,
+      // createdAt is set by MemoryService.record, so imported history keeps its dates.
     }),
     attachments: await createRepo<AttachmentRow>({
       ...base,
@@ -142,7 +142,6 @@ export function memoryRepos(): Repos {
     memoryHistory: new MemoryRepo<MemoryHistoryRow>({
       table: 'memory_history',
       schema: memoryHistorySchema,
-      timestamps: CREATED_ONLY,
       store,
     }),
     attachments: new MemoryRepo<AttachmentRow>({

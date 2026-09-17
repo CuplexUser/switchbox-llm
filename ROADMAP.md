@@ -8,10 +8,10 @@ _server done_ have their API and tests in place and are waiting for their UI.
 
 - **Phase A (agents and tools):** done
 - **Phase B (chat features):** done
-- **Phase C (memory):** relevance done; scopes, history, duplicates and conflicts have server support and need UI
+- **Phase C (memory):** done
 - **Phase D (security):** done except the Memory page notice for suggestion failures
 - **Phase E (quality):** CI, loop tests, the chat service split and structured logs done; client tests and
-  splitting large client files are open
+  splitting large client files are open, and imports need to keep their dates
 
 ## A. Agents and tools
 
@@ -61,11 +61,11 @@ _server done_ have their API and tests in place and are waiting for their UI.
 
 - [x] **C1. Relevant facts first**: keyword ranking over the user's message when there are more facts than the
       limit. Embeddings could come later where a provider has them.
-- [ ] **C2. Scopes** (_server done:_ `memories.scope` limits a fact to one profile). Needs a scope picker on the
-      Memory page.
-- [ ] **C3. Duplicates, conflicts and history**. Forgotten memories can be restored from the Memory page.
-      _Server done:_ `GET /api/memories/duplicates`, `POST /api/memories/conflicts` and
-      `GET /api/memories/:id/history`. Needs UI.
+- [x] **C2. Scopes**. Each memory is used in all chats or only with one profile, picked on the Memory page when
+      adding a memory or from its row.
+- [x] **C3. Duplicates, conflicts and history**. The Memory page lists near-duplicates and runs a conflict check
+      with the suggestion model; keeping one memory forgets the other. Each memory's history shows changes word by
+      word, deleting an active memory moves it to Forgotten, and exports include history.
 
 ## D. Security and robustness
 
@@ -88,3 +88,6 @@ _server done_ have their API and tests in place and are waiting for their UI.
 - [x] **E4. Split `ChatService.runPane`** into `prepareTurn`, `streamStep` and `executeTools`.
 - [ ] **E5. Split large client files** (`UsagePage`, `Sidebar`, `ChatPage`) when they are next changed.
 - [x] **E6. Structured logging** with run and pane ids (`LOG_LEVEL`, `LOG_FORMAT`).
+- [ ] **E7. Keep dates on import** (S). Importing resets `createdAt` to the import time for conversations, panes,
+      profiles, memories and attachments, because repolayer sets it on create when timestamps are on. Messages and
+      memory history already set their own dates.

@@ -432,6 +432,7 @@ export interface ExportBundle {
   messages: Message[];
   systemPrompts: SystemPrompt[];
   memories: Memory[];
+  memoryHistory?: MemoryHistoryEntry[];
   /** File contents are base64. */
   attachments?: (Attachment & { data: string })[];
   settings: Partial<AppSettings>;

@@ -1,179 +1,38 @@
-import CheckRoundedIcon from '@mui/icons-material/CheckRounded';
-import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
-import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
 import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
-import UndoRoundedIcon from '@mui/icons-material/UndoRounded';
 import Alert from '@mui/material/Alert';
 import Autocomplete from '@mui/material/Autocomplete';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
-import IconButton from '@mui/material/IconButton';
 import InputBase from '@mui/material/InputBase';
 import Skeleton from '@mui/material/Skeleton';
-import Switch from '@mui/material/Switch';
 import Tab from '@mui/material/Tab';
 import Tabs from '@mui/material/Tabs';
 import TextField from '@mui/material/TextField';
-import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { useMemo, useState } from 'react';
 import { Link as RouterLink } from 'react-router';
-import type { Memory, MemoryStatus } from '../../../shared/types.ts';
-import {
-  useCreateMemory,
-  useDeleteMemory,
-  useMemories,
-  useSettings,
-  useUpdateMemory,
-} from '../../api/hooks.ts';
+import type { Memory, MemoryStatus, SystemPrompt } from '../../../shared/types.ts';
+import { useCreateMemory, useMemories, usePrompts, useSettings } from '../../api/hooks.ts';
+import { MemoryHistoryDialog } from './MemoryHistoryDialog.tsx';
+import { MemoryReview } from './MemoryReview.tsx';
+import { MemoryRow } from './MemoryRow.tsx';
+import { ScopeButton, scopeLabel } from './ScopeButton.tsx';
 
-function EditableContent({ memory }: { memory: Memory }) {
-  const update = useUpdateMemory();
-  const [value, setValue] = useState(memory.content);
-
-  return (
-    <InputBase
-      multiline
-      fullWidth
-      value={value}
-      onChange={(event) => setValue(event.target.value)}
-      onBlur={() => {
-        const next = value.trim();
-        if (next && next !== memory.content) update.mutate({ id: memory.id, content: next });
-        else setValue(memory.content);
-      }}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' && !event.shiftKey) {
-          event.preventDefault();
-          (event.target as HTMLTextAreaElement).blur();
-        }
-      }}
-      inputProps={{ 'aria-label': 'Memory text' }}
-      sx={{
-        fontSize: '0.875rem',
-        lineHeight: 1.5,
-        px: 0.75,
-        py: 0.5,
-        ml: -0.75,
-        borderRadius: '6px',
-        '&:hover': { backgroundColor: 'action.hover' },
-        '&.Mui-focused': { backgroundColor: 'var(--sb-canvas)', outline: '1px solid var(--sb-ink)' },
-      }}
-    />
-  );
-}
-
-function CategoryTag({ category }: { category: string }) {
-  return (
-    <Typography
-      variant="caption"
-      sx={{
-        px: 0.875,
-        py: 0.25,
-        borderRadius: '4px',
-        border: '1px solid var(--sb-border)',
-        color: 'var(--sb-text-muted)',
-        whiteSpace: 'nowrap',
-      }}
-    >
-      {category}
-    </Typography>
-  );
-}
-
-function MemoryRow({ memory }: { memory: Memory }) {
-  const update = useUpdateMemory();
-  const remove = useDeleteMemory();
-  const status = memory.status;
-
-  return (
-    <Box
-      sx={{
-        display: 'flex',
-        alignItems: 'flex-start',
-        gap: 1.5,
-        px: 2,
-        py: 1.25,
-        borderBottom: '1px solid var(--sb-border)',
-        '&:last-child': { borderBottom: 'none' },
-        opacity: status === 'active' && !memory.enabled ? 0.55 : 1,
-      }}
-    >
-      <Box sx={{ flex: 1, minWidth: 0 }}>
-        <EditableContent key={memory.content} memory={memory} />
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
-          <CategoryTag category={memory.category} />
-          <Typography variant="caption" sx={{ color: 'var(--sb-text-faint)' }}>
-            {memory.source === 'suggested' ? 'Suggested' : memory.source === 'model' ? 'Saved by a model' : 'Added by you'}, {new Date(memory.createdAt).toLocaleDateString()}
-          </Typography>
-        </Box>
-      </Box>
-
-      {status === 'active' && (
-        <>
-          <Tooltip title={memory.enabled ? 'Used in chats. Click to pause.' : 'Paused. Click to use in chats.'}>
-            <Switch
-              checked={memory.enabled}
-              onChange={(event) => update.mutate({ id: memory.id, enabled: event.target.checked })}
-              slotProps={{ input: { 'aria-label': memory.enabled ? 'Pause memory' : 'Use memory' } }}
-              sx={{ my: 0.5 }}
-            />
-          </Tooltip>
-          <IconButton size="small" aria-label="Delete memory" onClick={() => remove.mutate(memory.id)} sx={{ mt: 0.5 }}>
-            <DeleteOutlineRoundedIcon fontSize="small" />
-          </IconButton>
-        </>
-      )}
-
-      {status === 'pending' && (
-        <Box sx={{ display: 'flex', gap: 0.75, mt: 0.25 }}>
-          <Button
-            size="small"
-            variant="contained"
-            startIcon={<CheckRoundedIcon />}
-            onClick={() => update.mutate({ id: memory.id, status: 'active', enabled: true })}
-          >
-            Keep
-          </Button>
-          <Button
-            size="small"
-            variant="outlined"
-            startIcon={<CloseRoundedIcon />}
-            onClick={() => update.mutate({ id: memory.id, status: 'rejected' })}
-          >
-            Dismiss
-          </Button>
-        </Box>
-      )}
-
-      {(status === 'rejected' || status === 'forgotten') && (
-        <Box sx={{ display: 'flex', gap: 0.5, mt: 0.25 }}>
-          <Tooltip title={status === 'forgotten' ? 'Restore this memory' : 'Keep this memory after all'}>
-            <IconButton size="small" aria-label="Restore memory" onClick={() => update.mutate({ id: memory.id, status: 'active' })}>
-              <UndoRoundedIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-          <IconButton size="small" aria-label="Delete permanently" onClick={() => remove.mutate(memory.id)}>
-            <DeleteOutlineRoundedIcon fontSize="small" />
-          </IconButton>
-        </Box>
-      )}
-    </Box>
-  );
-}
-
-function AddMemory({ categories }: { categories: string[] }) {
+function AddMemory({ categories, profiles }: { categories: string[]; profiles: SystemPrompt[] }) {
   const create = useCreateMemory();
   const [content, setContent] = useState('');
   const [category, setCategory] = useState('');
+  const [scope, setScope] = useState<string | null>(null);
 
   function submit(): void {
     if (!content.trim()) return;
     create.mutate(
-      { content: content.trim(), category: category.trim() || 'general' },
+      { content: content.trim(), category: category.trim() || 'general', scope },
       {
         onSuccess: () => {
           setContent('');
+          // Back to every chat, so the next fact isn't limited to a profile by accident.
+          setScope(null);
         },
       },
     );
@@ -201,8 +60,9 @@ function AddMemory({ categories }: { categories: string[] }) {
         inputValue={category}
         onInputChange={(_event, value) => setCategory(value)}
         renderInput={(params) => <TextField {...params} placeholder="Category" />}
-        sx={{ width: { xs: 'calc(100% - 90px)', sm: 180 }, flexShrink: 0 }}
+        sx={{ width: { xs: 'calc(100% - 90px)', sm: 160 }, flexShrink: 0 }}
       />
+      <ScopeButton value={scope} profiles={profiles} onChange={setScope} size="medium" />
       <Button type="submit" variant="contained" disabled={!content.trim() || create.isPending} sx={{ flexShrink: 0 }}>
         Add
       </Button>
@@ -220,7 +80,10 @@ const TABS: { status: MemoryStatus; label: string }[] = [
 export function MemoryPage() {
   const memories = useMemories();
   const settings = useSettings();
+  const prompts = usePrompts();
+  const profiles = useMemo(() => prompts.data ?? [], [prompts.data]);
   const [tab, setTab] = useState<MemoryStatus>('active');
+  const [historyOf, setHistoryOf] = useState<Memory | null>(null);
   const [search, setSearch] = useState('');
 
   const all = useMemo(() => memories.data ?? [], [memories.data]);
@@ -236,9 +99,12 @@ export function MemoryPage() {
     return all.filter(
       (memory) =>
         memory.status === tab &&
-        (!term || memory.content.toLowerCase().includes(term) || memory.category.toLowerCase().includes(term)),
+        (!term ||
+          memory.content.toLowerCase().includes(term) ||
+          memory.category.toLowerCase().includes(term) ||
+          scopeLabel(memory.scope, profiles).toLowerCase().includes(term)),
     );
-  }, [all, tab, search]);
+  }, [all, tab, search, profiles]);
 
   const memorySettings = settings.data?.memory;
   const enabledCount = all.filter((memory) => memory.status === 'active' && memory.enabled).length;
@@ -256,7 +122,7 @@ export function MemoryPage() {
             : ''}
         </Typography>
 
-        <AddMemory categories={categories} />
+        <AddMemory categories={categories} profiles={profiles} />
 
         {memorySettings && !memorySettings.autoSuggest && (
           <Alert
@@ -315,6 +181,8 @@ export function MemoryPage() {
           </Box>
         </Box>
 
+        {tab === 'active' && <MemoryReview active={all.filter((memory) => memory.status === 'active')} />}
+
         <Box sx={{ mt: 2, border: '1px solid var(--sb-border)', borderRadius: '10px', backgroundColor: 'var(--sb-surface)' }}>
           {memories.isLoading &&
             Array.from({ length: 4 }, (_, index) => <Skeleton key={index} height={56} sx={{ mx: 2 }} />)}
@@ -332,10 +200,11 @@ export function MemoryPage() {
             </Typography>
           )}
           {visible.map((memory) => (
-            <MemoryRow key={memory.id} memory={memory} />
+            <MemoryRow key={memory.id} memory={memory} profiles={profiles} onShowHistory={setHistoryOf} />
           ))}
         </Box>
       </Box>
+      <MemoryHistoryDialog memory={historyOf} onClose={() => setHistoryOf(null)} />
     </Box>
   );
 }

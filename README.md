@@ -147,6 +147,18 @@ remember.
 Under Settings → Memory you can also have a model read each exchange and suggest facts. Those wait in
 Suggestions until you keep or dismiss them.
 
+On the Memory page:
+
+- **Scope:** each memory is used in all chats, or only in panes that use one profile. Deleting a profile moves
+  its memories back to all chats
+- **Forgetting:** the delete button on a memory moves it to Forgotten, where it can be restored or deleted for good
+- **History:** every memory keeps a record of when it was added, changed, forgotten or restored, and by whom,
+  with changes shown word by word. History is included in Settings → Data exports
+- **Duplicates:** memories that say nearly the same thing are listed for review; keep one and the other is
+  forgotten, or keep both and the pair stops coming back in this browser
+- **Conflicts:** "Check for conflicts" asks the suggestion model which memories contradict each other, such as
+  two home cities
+
 ## Usage
 
 The Usage page totals tokens, cost, replies and median speed for the last 7, 30 or 90 days or all time. It can

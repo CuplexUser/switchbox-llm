@@ -30,6 +30,7 @@ export function dataRoutes({ repos, settings, usage, store }: Services): Hono {
       messages: await repos.messages.findMany({ orderBy: [{ field: 'createdAt', direction: 'asc' }] }),
       systemPrompts: await repos.systemPrompts.findMany(),
       memories: await repos.memories.findMany(),
+      memoryHistory: await repos.memoryHistory.findMany({ orderBy: [{ field: 'createdAt', direction: 'asc' }] }),
       attachments: files
         .filter((file) => file.conversationId !== null && persisted.has(file.conversationId))
         .map(({ data, ...file }) => ({ ...file, data: Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString('base64') })),
@@ -66,6 +67,7 @@ export function dataRoutes({ repos, settings, usage, store }: Services): Hono {
       messages: await insert(repos.messages, bundle.messages, 'messages'),
       systemPrompts: await insert(repos.systemPrompts, bundle.systemPrompts, 'systemPrompts'),
       memories: await insert(repos.memories, bundle.memories, 'memories'),
+      memoryHistory: await insert(repos.memoryHistory, bundle.memoryHistory, 'memoryHistory'),
       attachments: await insert(repos.attachments, bundle.attachments, 'attachments', (row) => ({
         ...row,
         data: Buffer.from(String(row.data ?? ''), 'base64'),

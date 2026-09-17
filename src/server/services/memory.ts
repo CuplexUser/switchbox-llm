@@ -170,7 +170,7 @@ export class MemoryService {
   }
 
   async record(memoryId: string, action: MemoryAction, actor: MemoryActor, content: string, previousContent: string | null = null): Promise<void> {
-    await this.repos.memoryHistory.create({ memoryId, action, actor, content, previousContent });
+    await this.repos.memoryHistory.create({ memoryId, action, actor, content, previousContent, createdAt: new Date() });
   }
 
   async history(memoryId: string) {
