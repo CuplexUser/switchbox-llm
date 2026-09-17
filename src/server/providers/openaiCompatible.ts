@@ -1,5 +1,6 @@
 import { parseSse } from '../../shared/sse.ts';
-import { PROVIDER_LABELS, type ModelInfo, type ProviderId } from '../../shared/types.ts';
+import { PROVIDER_LABELS, type GenerationParams, type ModelInfo, type ProviderId, type ReasoningEffort } from '../../shared/types.ts';
+import { attachmentText, nearestEffort } from './anthropic.ts';
 import {
   errorFromResponse,
   joinUrl,
@@ -7,6 +8,7 @@ import {
   providerFetch,
   type ChatEvent,
   type ChatRequest,
+  type LoopAttachment,
   type LoopMessage,
   type Provider,
   type ToolCall,
@@ -78,10 +80,42 @@ export function mapOpenAiChunk(chunk: OpenAiChunk, pending: Map<number, ToolCall
   return events;
 }
 
+/** A user turn with files as content parts: images and PDFs as data URLs, text files inline. */
+function userContent(content: string, attachments: LoopAttachment[] | undefined): unknown {
+  if (!attachments?.length) return content;
+  const parts: unknown[] = [];
+  for (const attachment of attachments) {
+    if (attachment.kind === 'image' && attachment.data) {
+      parts.push({ type: 'image_url', image_url: { url: `data:${attachment.mimeType};base64,${attachment.data}` } });
+    } else if (attachment.kind === 'pdf' && attachment.data) {
+      parts.push({ type: 'file', file: { filename: attachment.name, file_data: `data:application/pdf;base64,${attachment.data}` } });
+    } else if (attachment.kind === 'text') {
+      parts.push({ type: 'text', text: attachmentText(attachment) });
+    }
+  }
+  if (content) parts.push({ type: 'text', text: content });
+  return parts;
+}
+
+const OPENAI_EFFORTS: ReasoningEffort[] = ['low', 'medium', 'high'];
+
+/** Reasoning settings in each server's dialect. Servers without the concept ignore the field. */
+export function reasoningFields(id: ProviderId, params: GenerationParams): Record<string, unknown> {
+  const effort = params.reasoningEffort ? nearestEffort(params.reasoningEffort, OPENAI_EFFORTS) : null;
+  if (id === 'openrouter') {
+    if (effort) return { reasoning: { effort } };
+    if (params.thinkingBudget) return { reasoning: { max_tokens: params.thinkingBudget } };
+    return {};
+  }
+  return effort ? { reasoning_effort: effort } : {};
+}
+
 export function toOpenAiMessages(system: string, messages: LoopMessage[]): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = system ? [{ role: 'system', content: system }] : [];
   for (const message of messages) {
-    if (message.role === 'tool') {
+    if (message.role === 'user') {
+      out.push({ role: 'user', content: userContent(message.content, message.attachments) });
+    } else if (message.role === 'tool') {
       out.push({ role: 'tool', tool_call_id: message.toolCallId, content: message.content });
     } else if (message.role === 'assistant' && message.toolCalls?.length) {
       out.push({
@@ -178,6 +212,7 @@ export class OpenAiCompatibleProvider implements Provider {
     if (topP !== null) body.top_p = topP;
     // OpenAI's current models only accept max_completion_tokens; everything else still reads max_tokens.
     if (maxTokens !== null) body[this.id === 'openai' ? 'max_completion_tokens' : 'max_tokens'] = maxTokens;
+    Object.assign(body, reasoningFields(this.id, request.params));
 
     if (request.tools?.length) {
       body.tools = request.tools.map((tool) => ({

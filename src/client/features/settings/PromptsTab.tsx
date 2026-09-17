@@ -1,20 +1,87 @@
 import AddRoundedIcon from '@mui/icons-material/AddRounded';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
+import Checkbox from '@mui/material/Checkbox';
 import FormControlLabel from '@mui/material/FormControlLabel';
+import Radio from '@mui/material/Radio';
+import RadioGroup from '@mui/material/RadioGroup';
 import Skeleton from '@mui/material/Skeleton';
 import Switch from '@mui/material/Switch';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import { useState } from 'react';
 import type { SystemPrompt } from '../../../shared/types.ts';
-import { useDeletePrompt, usePrompts, useSavePrompt } from '../../api/hooks.ts';
+import { useDeletePrompt, usePrompts, useSavePrompt, useSettings, useTools } from '../../api/hooks.ts';
 import { ConfirmDialog } from '../../components/ConfirmDialog.tsx';
+import { ParamsFields } from './ParamsFields.tsx';
 import { SettingsHeader } from './Section.tsx';
 
-type Draft = Pick<SystemPrompt, 'name' | 'content' | 'isDefault'> & { id?: string };
+type Draft = Pick<SystemPrompt, 'name' | 'content' | 'isDefault' | 'tools' | 'maxToolRounds' | 'params'> & { id?: string };
 
-const EMPTY_DRAFT: Draft = { name: '', content: '', isDefault: false };
+const EMPTY_DRAFT: Draft = { name: '', content: '', isDefault: false, tools: null, maxToolRounds: null, params: null };
+
+function ProfileFields({ value, onChange }: { value: Draft; onChange: (value: Draft) => void }) {
+  const tools = useTools();
+  const settings = useSettings();
+  const groups = tools.data ?? [];
+  const limited = value.tools !== null;
+
+  function toggleGroup(id: string, on: boolean): void {
+    const current = new Set(value.tools ?? []);
+    if (on) current.add(id);
+    else current.delete(id);
+    onChange({ ...value, tools: [...current] });
+  }
+
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, pt: 1, borderTop: '1px solid var(--sb-border)' }}>
+      <Box>
+        <Typography variant="subtitle2">Tools</Typography>
+        <Typography variant="body2" color="text.secondary">
+          Limit what panes using this profile can do. Chat toggles still apply on top.
+        </Typography>
+        <RadioGroup
+          row
+          value={limited ? 'some' : 'all'}
+          onChange={(event) => onChange({ ...value, tools: event.target.value === 'all' ? null : groups.map((group) => group.id) })}
+        >
+          <FormControlLabel value="all" control={<Radio size="small" />} label={<Typography variant="body2">All tools</Typography>} />
+          <FormControlLabel value="some" control={<Radio size="small" />} label={<Typography variant="body2">Only these</Typography>} />
+        </RadioGroup>
+        {limited && (
+          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, pl: 1 }}>
+            {groups.map((group) => (
+              <FormControlLabel
+                key={group.id}
+                control={<Checkbox size="small" checked={value.tools?.includes(group.id) ?? false} onChange={(event) => toggleGroup(group.id, event.target.checked)} />}
+                label={<Typography variant="body2">{group.kind === 'mcp' ? `${group.label} (MCP)` : group.label}</Typography>}
+              />
+            ))}
+          </Box>
+        )}
+      </Box>
+      <TextField
+        type="number"
+        label="Tool rounds per reply"
+        value={value.maxToolRounds ?? ''}
+        placeholder={String(settings.data?.agent.maxToolRounds ?? 6)}
+        helperText="Leave empty to use the limit from Settings → Tools."
+        onChange={(event) => {
+          const parsed = Math.round(Number(event.target.value));
+          onChange({ ...value, maxToolRounds: event.target.value === '' || !Number.isFinite(parsed) ? null : Math.min(Math.max(parsed, 1), 50) });
+        }}
+        slotProps={{ inputLabel: { shrink: true }, htmlInput: { min: 1, max: 50 } }}
+        sx={{ maxWidth: 260 }}
+      />
+      <Box>
+        <Typography variant="subtitle2" sx={{ mb: 1 }}>
+          Generation
+        </Typography>
+        <ParamsFields value={value.params ?? {}} onChange={(params) => onChange({ ...value, params })} placeholders={settings.data?.generation} />
+      </Box>
+    </Box>
+  );
+}
 
 function PromptEditor({ draft, onDone }: { draft: Draft; onDone: () => void }) {
   const save = useSavePrompt();
@@ -52,6 +119,7 @@ function PromptEditor({ draft, onDone }: { draft: Draft; onDone: () => void }) {
         control={<Switch checked={value.isDefault} onChange={(event) => setValue({ ...value, isDefault: event.target.checked })} />}
         label={<Typography variant="body2">Use for new chats by default</Typography>}
       />
+      <ProfileFields value={value} onChange={setValue} />
       {save.error && (
         <Typography variant="body2" color="error">
           {save.error.message}
@@ -68,14 +136,14 @@ function PromptEditor({ draft, onDone }: { draft: Draft; onDone: () => void }) {
           Cancel
         </Button>
         <Button type="submit" variant="contained" disabled={!value.name.trim() || save.isPending}>
-          {draft.id ? 'Save prompt' : 'Create prompt'}
+          {draft.id ? 'Save profile' : 'Create profile'}
         </Button>
       </Box>
       <ConfirmDialog
         open={confirming}
-        title="Delete this prompt?"
-        body="Panes that use it will fall back to no system prompt."
-        confirmLabel="Delete prompt"
+        title="Delete this profile?"
+        body="Panes that use it will fall back to no system prompt, and memories limited to it will apply to every chat."
+        confirmLabel="Delete profile"
         destructive
         onClose={() => setConfirming(false)}
         onConfirm={() => draft.id && remove.mutate(draft.id, { onSuccess: onDone })}
@@ -91,8 +159,8 @@ export function PromptsTab() {
   return (
     <>
       <SettingsHeader
-        title="System prompts"
-        description="Reusable instructions you can attach to any pane. A pane can also have its own custom instructions."
+        title="Profiles"
+        description="Reusable system prompts, optionally with their own tools, tool round limit and generation settings. Pick one per pane to compare the same model set up in different ways."
       />
 
       {editing ? (
@@ -102,13 +170,13 @@ export function PromptsTab() {
       ) : (
         <>
           <Button variant="outlined" startIcon={<AddRoundedIcon />} onClick={() => setEditing(EMPTY_DRAFT)} sx={{ mb: 2 }}>
-            New prompt
+            New profile
           </Button>
           <Box sx={{ border: '1px solid var(--sb-border)', borderRadius: '10px', backgroundColor: 'var(--sb-surface)', overflow: 'hidden' }}>
             {prompts.isLoading && <Skeleton height={64} sx={{ mx: 2 }} />}
             {prompts.isSuccess && prompts.data.length === 0 && (
               <Typography variant="body2" sx={{ p: 3, textAlign: 'center', color: 'var(--sb-text-faint)' }}>
-                No prompts yet. Create one to reuse it across chats.
+                No profiles yet. Create one to reuse it across chats.
               </Typography>
             )}
             {prompts.data?.map((prompt) => (
@@ -150,6 +218,7 @@ export function PromptsTab() {
                   sx={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', mt: 0.25 }}
                 >
                   {prompt.content || 'Empty prompt'}
+                  {prompt.tools ? ` · Tools: ${prompt.tools.length === 0 ? 'none' : prompt.tools.join(', ')}` : ''}
                 </Typography>
               </Box>
             ))}

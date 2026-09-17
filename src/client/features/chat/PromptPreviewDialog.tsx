@@ -42,6 +42,7 @@ export function PromptPreviewDialog({ paneId, onClose }: { paneId: string | null
               <Stat label="Memories included" value={String(data.memoryCount)} />
               <Stat label="Web search" value={SEARCH_LABELS[data.search]} />
               <Stat label="Tools" value={data.tools.length ? data.tools.join(', ') : 'None'} />
+              <Stat label="Tool rounds" value={String(data.maxToolRounds)} />
               {params.map(([label, value]) => (
                 <Stat key={label} label={String(label)} value={value === null ? 'Provider default' : String(value)} />
               ))}

@@ -28,8 +28,9 @@ function GenerationForm({ saved }: { saved: GenerationParams }) {
       <Box sx={{ border: '1px solid var(--sb-border)', borderRadius: '10px', backgroundColor: 'var(--sb-surface)', p: 2.5 }}>
         <ParamsFields value={params} onChange={setParams} />
         <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
-          Anthropic requires an output limit, so Switchbox sends 8,192 tokens when none is set. Some reasoning models
-          reject custom temperature values.
+          Anthropic requires an output limit, so Switchbox sends 32,000 tokens to models that think and 8,192 to older
+          ones when none is set. Temperature and top P are left out for newer Claude models, which reject them, and some
+          other reasoning models reject them too.
         </Typography>
         <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1, mt: 2 }}>
           <Button color="inherit" disabled={!dirty} onClick={() => setParams(saved)}>
@@ -41,7 +42,13 @@ function GenerationForm({ saved }: { saved: GenerationParams }) {
             onClick={() =>
               update.mutate({
                 section: 'generation',
-                value: { temperature: params.temperature ?? null, topP: params.topP ?? null, maxTokens: params.maxTokens ?? null },
+                value: {
+                  temperature: params.temperature ?? null,
+                  topP: params.topP ?? null,
+                  maxTokens: params.maxTokens ?? null,
+                  reasoningEffort: params.reasoningEffort ?? null,
+                  thinkingBudget: params.thinkingBudget ?? null,
+                },
               })
             }
           >

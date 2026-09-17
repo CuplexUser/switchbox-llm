@@ -1,9 +1,15 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   AppSettings,
+  Attachment,
   Conversation,
   ConversationDetail,
+  McpServerConfig,
+  McpTestResult,
   Memory,
+  MemoryConflict,
+  MemoryDuplicate,
+  MemoryHistoryEntry,
   MemoryStatus,
   Message,
   ModelInfo,
@@ -12,12 +18,16 @@ import type {
   PromptPreview,
   ProviderId,
   ProviderStatus,
+  SearchHit,
   SettingsSection,
+  SuggestionStatus,
   SystemPrompt,
+  ToolGroupInfo,
   UsageRange,
   UsageReport,
   WebStatus,
 } from '../../shared/types.ts';
+import { fileToBase64 } from '../lib/files.ts';
 import { api } from './client.ts';
 
 export const keys = {
@@ -31,6 +41,11 @@ export const keys = {
   messages: (id: string) => ['messages', id] as const,
   memories: (status?: MemoryStatus) => ['memories', status ?? 'all'] as const,
   pendingCount: ['memories', 'pending-count'] as const,
+  memoryHistory: (id: string) => ['memories', 'history', id] as const,
+  duplicates: ['memories', 'duplicates'] as const,
+  suggestionStatus: ['memories', 'suggestion-status'] as const,
+  tools: ['tools'] as const,
+  search: (query: string) => ['search', query] as const,
   usage: (range: UsageRange, provider: ProviderId | null) => ['usage', range, provider ?? 'all'] as const,
 };
 
@@ -59,6 +74,7 @@ export function useUpdateSettings() {
     onSuccess: (settings, { section }) => {
       client.setQueryData(keys.settings, settings);
       if (section === 'web') void client.invalidateQueries({ queryKey: keys.webStatus });
+      if (section === 'agent' || section === 'mcp') void client.invalidateQueries({ queryKey: keys.tools });
       if (section === 'providers') {
         void client.invalidateQueries({ queryKey: keys.providers });
         void client.invalidateQueries({ queryKey: keys.models });
@@ -102,6 +118,18 @@ export function useRefreshModels() {
   return useMutation({
     mutationFn: () => api<ModelsResponse>('/models?refresh=1'),
     onSuccess: (data) => client.setQueryData(keys.models, data),
+  });
+}
+
+// Tools
+
+export function useTools() {
+  return useQuery({ queryKey: keys.tools, queryFn: () => api<ToolGroupInfo[]>('/tools'), staleTime: 30_000 });
+}
+
+export function useTestMcpServer() {
+  return useMutation({
+    mutationFn: (server: McpServerConfig) => api<McpTestResult>('/mcp/test', { method: 'POST', json: server }),
   });
 }
 
@@ -237,6 +265,40 @@ export function useRemovePane() {
   });
 }
 
+export function useBranchConversation() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ conversationId, paneId, messageId }: { conversationId: string; paneId: string; messageId: string }) =>
+      api<ConversationDetail>(`/conversations/${conversationId}/branch`, { method: 'POST', json: { paneId, messageId } }),
+    onSuccess: (conversation) => {
+      client.setQueryData(keys.conversation(conversation.id), conversation);
+      void client.invalidateQueries({ queryKey: keys.conversations });
+    },
+  });
+}
+
+/** Uploads a file for the next message. It belongs to no chat until it is sent. */
+export function useUploadAttachment() {
+  return useMutation({
+    mutationFn: async (file: File) =>
+      api<Attachment>('/attachments', {
+        method: 'POST',
+        json: { name: file.name, mimeType: file.type, data: await fileToBase64(file) },
+      }),
+  });
+}
+
+export function useSearch(query: string) {
+  const term = query.trim();
+  return useQuery({
+    queryKey: keys.search(term),
+    queryFn: () => api<SearchHit[]>(`/search?q=${encodeURIComponent(term)}&limit=12`),
+    enabled: term.length >= 2,
+    staleTime: 30_000,
+    placeholderData: keepPreviousData,
+  });
+}
+
 export function usePanePreview(paneId: string | null) {
   return useQuery({
     queryKey: ['preview', paneId],
@@ -269,10 +331,35 @@ function invalidateMemories(client: ReturnType<typeof useQueryClient>): void {
   void client.invalidateQueries({ queryKey: ['memories'] });
 }
 
+export function useSuggestionStatus() {
+  return useQuery({
+    queryKey: keys.suggestionStatus,
+    queryFn: () => api<SuggestionStatus>('/memories/suggestion-status'),
+    refetchInterval: 30_000,
+  });
+}
+
+export function useMemoryHistory(id: string | null) {
+  return useQuery({
+    queryKey: keys.memoryHistory(id ?? ''),
+    queryFn: () => api<MemoryHistoryEntry[]>(`/memories/${id}/history`),
+    enabled: Boolean(id),
+  });
+}
+
+export function useMemoryDuplicates() {
+  return useQuery({ queryKey: keys.duplicates, queryFn: () => api<MemoryDuplicate[]>('/memories/duplicates') });
+}
+
+export function useCheckConflicts() {
+  return useMutation({ mutationFn: () => api<MemoryConflict[]>('/memories/conflicts', { method: 'POST', json: {} }) });
+}
+
 export function useCreateMemory() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (memory: Pick<Memory, 'content' | 'category'>) => api<Memory>('/memories', { method: 'POST', json: memory }),
+    mutationFn: (memory: Pick<Memory, 'content' | 'category'> & Partial<Pick<Memory, 'scope'>>) =>
+      api<Memory>('/memories', { method: 'POST', json: memory }),
     onSuccess: () => invalidateMemories(client),
   });
 }

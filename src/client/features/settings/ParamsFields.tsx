@@ -2,7 +2,9 @@ import Box from '@mui/material/Box';
 import TextField from '@mui/material/TextField';
 import type { GenerationParams } from '../../../shared/types.ts';
 
-const FIELDS: { key: keyof GenerationParams; label: string; min: number; max: number; step: number; help: string }[] = [
+type NumberKey = 'temperature' | 'topP' | 'maxTokens';
+
+const FIELDS: { key: NumberKey; label: string; min: number; max: number; step: number; help: string }[] = [
   { key: 'temperature', label: 'Temperature', min: 0, max: 2, step: 0.1, help: '0 to 2. Higher is more varied.' },
   { key: 'topP', label: 'Top P', min: 0, max: 1, step: 0.05, help: '0 to 1. Nucleus sampling.' },
   { key: 'maxTokens', label: 'Max output tokens', min: 1, max: 1_000_000, step: 1, help: 'Upper bound on reply length.' },

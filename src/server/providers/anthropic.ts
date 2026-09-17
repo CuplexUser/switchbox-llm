@@ -1,5 +1,5 @@
 import { parseSse } from '../../shared/sse.ts';
-import type { ModelInfo } from '../../shared/types.ts';
+import type { GenerationParams, ModelInfo, ReasoningEffort } from '../../shared/types.ts';
 import {
   errorFromResponse,
   joinUrl,
@@ -7,13 +7,17 @@ import {
   providerFetch,
   type ChatEvent,
   type ChatRequest,
+  type LoopAttachment,
   type LoopMessage,
   type Provider,
 } from './types.ts';
 
 const API_VERSION = '2023-06-01';
-/** The Messages API requires max_tokens; used when the user leaves it unset. */
+/** The Messages API requires max_tokens; used when the user leaves it unset on older models. */
 export const ANTHROPIC_DEFAULT_MAX_TOKENS = 8192;
+/** Output room for models that think, so thinking doesn't crowd out the answer. */
+export const ANTHROPIC_THINKING_MAX_TOKENS = 32_000;
+const MIN_THINKING_BUDGET = 1024;
 
 /** Models on the server-tool generation with dynamic filtering. Older models only accept the basic variant. */
 const NEW_SEARCH_TOOL_MODELS = [
@@ -31,6 +35,76 @@ export function webSearchToolFor(model: string): Record<string, unknown> {
   const normalized = model.trim().toLowerCase();
   const isNew = NEW_SEARCH_TOOL_MODELS.some((known) => normalized.startsWith(known));
   return { type: isNew ? 'web_search_20260209' : 'web_search_20250305', name: 'web_search', max_uses: 8 };
+}
+
+/**
+ * How a Claude model takes thinking and sampling settings.
+ * always: thinking can't be turned off. default: thinks unless told otherwise. adaptive: thinks
+ * when asked, with no fixed budget. budget: older models, which take a token budget.
+ */
+export interface ClaudeModelRules {
+  thinking: 'always' | 'default' | 'adaptive' | 'budget';
+  /** temperature and top_p are rejected. */
+  noSampling: boolean;
+  efforts: ReasoningEffort[];
+}
+
+const ALL_EFFORTS: ReasoningEffort[] = ['low', 'medium', 'high', 'xhigh', 'max'];
+const MODEL_RULES: [string, ClaudeModelRules][] = [
+  ['claude-fable-5', { thinking: 'always', noSampling: true, efforts: ALL_EFFORTS }],
+  ['claude-mythos-5', { thinking: 'always', noSampling: true, efforts: ALL_EFFORTS }],
+  ['claude-opus-5', { thinking: 'default', noSampling: true, efforts: ALL_EFFORTS }],
+  ['claude-sonnet-5', { thinking: 'default', noSampling: true, efforts: ALL_EFFORTS }],
+  ['claude-opus-4-8', { thinking: 'adaptive', noSampling: true, efforts: ALL_EFFORTS }],
+  ['claude-opus-4-7', { thinking: 'adaptive', noSampling: true, efforts: ALL_EFFORTS }],
+  ['claude-opus-4-6', { thinking: 'adaptive', noSampling: false, efforts: ['low', 'medium', 'high', 'max'] }],
+  ['claude-sonnet-4-6', { thinking: 'adaptive', noSampling: false, efforts: ['low', 'medium', 'high', 'max'] }],
+  ['claude-opus-4-5', { thinking: 'budget', noSampling: false, efforts: ['low', 'medium', 'high'] }],
+];
+
+export function claudeModelRules(model: string): ClaudeModelRules {
+  const normalized = model.trim().toLowerCase();
+  return MODEL_RULES.find(([prefix]) => normalized.startsWith(prefix))?.[1] ?? { thinking: 'budget', noSampling: false, efforts: [] };
+}
+
+/** The closest effort a model accepts: the one asked for, else the next lower one, else the lowest. */
+export function nearestEffort(wanted: ReasoningEffort, supported: ReasoningEffort[]): ReasoningEffort | null {
+  if (supported.includes(wanted)) return wanted;
+  const rank = ALL_EFFORTS.indexOf(wanted);
+  return supported.filter((effort) => ALL_EFFORTS.indexOf(effort) < rank).at(-1) ?? supported[0] ?? null;
+}
+
+/** Thinking, effort, sampling and output settings for one request, following the model's rules. */
+export function generationFields(model: string, params: GenerationParams): Record<string, unknown> {
+  const rules = claudeModelRules(model);
+  const fields: Record<string, unknown> = {};
+  let thinking = false;
+
+  const effort = params.reasoningEffort ? nearestEffort(params.reasoningEffort, rules.efforts) : null;
+  if (effort) fields.output_config = { effort };
+
+  let maxTokens = params.maxTokens;
+  const wantsThinking = Boolean(effort || params.thinkingBudget);
+  if (rules.thinking === 'always' || rules.thinking === 'default' || (rules.thinking === 'adaptive' && wantsThinking)) {
+    // Summaries make the reasoning visible; newer models otherwise return it empty.
+    fields.thinking = { type: 'adaptive', display: 'summarized' };
+    thinking = true;
+    maxTokens ??= ANTHROPIC_THINKING_MAX_TOKENS;
+  } else if (rules.thinking === 'budget' && params.thinkingBudget !== null && params.thinkingBudget >= MIN_THINKING_BUDGET) {
+    fields.thinking = { type: 'enabled', budget_tokens: params.thinkingBudget };
+    thinking = true;
+    // The budget has to fit inside max_tokens with room left for the answer.
+    maxTokens = Math.max(maxTokens ?? 0, params.thinkingBudget + ANTHROPIC_DEFAULT_MAX_TOKENS);
+  }
+  fields.max_tokens = maxTokens ?? ANTHROPIC_DEFAULT_MAX_TOKENS;
+
+  // Newer models reject sampling settings, and none of them combine with thinking.
+  // Recent models also reject temperature and top_p together, so temperature wins.
+  if (!rules.noSampling && !thinking) {
+    if (params.temperature !== null) fields.temperature = params.temperature;
+    else if (params.topP !== null) fields.top_p = params.topP;
+  }
+  return fields;
 }
 
 interface Block {
@@ -165,6 +239,34 @@ export class AnthropicTurn {
   }
 }
 
+/** A text attachment as the model sees it, with its id for read_attachment. */
+export function attachmentText(attachment: LoopAttachment): string {
+  const name = attachment.name.replaceAll('"', "'");
+  return `<attachment name="${name}" id="${attachment.id}">\n${attachment.text ?? ''}\n</attachment>`;
+}
+
+/** A user turn with files: images and documents first, then text, as the API recommends. */
+function userContent(content: string, attachments: LoopAttachment[] | undefined): unknown {
+  if (!attachments?.length) return content;
+  const blocks: unknown[] = [];
+  for (const attachment of attachments) {
+    if (attachment.kind === 'image' && attachment.data) {
+      blocks.push({ type: 'image', source: { type: 'base64', media_type: attachment.mimeType, data: attachment.data } });
+    } else if (attachment.kind === 'pdf' && attachment.data) {
+      blocks.push({
+        type: 'document',
+        source: { type: 'base64', media_type: 'application/pdf', data: attachment.data },
+        title: attachment.name,
+      });
+    }
+  }
+  for (const attachment of attachments) {
+    if (attachment.kind === 'text') blocks.push({ type: 'text', text: attachmentText(attachment) });
+  }
+  if (content) blocks.push({ type: 'text', text: content });
+  return blocks;
+}
+
 /** Neutral history to Messages API turns. Consecutive tool results share one user message, as the API requires. */
 export function toAnthropicMessages(messages: LoopMessage[]): { role: string; content: unknown }[] {
   const out: { role: string; content: unknown }[] = [];
@@ -188,7 +290,7 @@ export function toAnthropicMessages(messages: LoopMessage[]): { role: string; co
     }
     flush();
     if (message.role === 'user') {
-      out.push({ role: 'user', content: message.content });
+      out.push({ role: 'user', content: userContent(message.content, message.attachments) });
     } else if (Array.isArray(message.raw) && message.raw.length > 0) {
       out.push({ role: 'assistant', content: message.raw });
     } else {
@@ -241,17 +343,16 @@ export class AnthropicProvider implements Provider {
   }
 
   async *streamChat(request: ChatRequest): AsyncIterable<ChatEvent> {
-    const { temperature, topP, maxTokens } = request.params;
     const body: Record<string, unknown> = {
       model: request.model,
-      max_tokens: maxTokens ?? ANTHROPIC_DEFAULT_MAX_TOKENS,
+      ...generationFields(request.model, request.params),
       messages: toAnthropicMessages(request.messages),
       stream: true,
+      // Caches the conversation so far, since every tool round resends the same prefix.
+      cache_control: { type: 'ephemeral' },
     };
-    if (request.system) body.system = request.system;
-    // Recent Claude models reject temperature and top_p together, so temperature wins.
-    if (temperature !== null) body.temperature = temperature;
-    else if (topP !== null) body.top_p = topP;
+    // A breakpoint on the system prompt keeps tools and system cached when the conversation changes.
+    if (request.system) body.system = [{ type: 'text', text: request.system, cache_control: { type: 'ephemeral' } }];
 
     const tools: unknown[] = (request.tools ?? []).map((tool) => ({
       name: tool.name,

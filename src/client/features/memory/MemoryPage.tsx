@@ -146,9 +146,9 @@ function MemoryRow({ memory }: { memory: Memory }) {
         </Box>
       )}
 
-      {status === 'rejected' && (
+      {(status === 'rejected' || status === 'forgotten') && (
         <Box sx={{ display: 'flex', gap: 0.5, mt: 0.25 }}>
-          <Tooltip title="Keep this memory after all">
+          <Tooltip title={status === 'forgotten' ? 'Restore this memory' : 'Keep this memory after all'}>
             <IconButton size="small" aria-label="Restore memory" onClick={() => update.mutate({ id: memory.id, status: 'active' })}>
               <UndoRoundedIcon fontSize="small" />
             </IconButton>
@@ -214,6 +214,7 @@ const TABS: { status: MemoryStatus; label: string }[] = [
   { status: 'active', label: 'Memories' },
   { status: 'pending', label: 'Suggestions' },
   { status: 'rejected', label: 'Dismissed' },
+  { status: 'forgotten', label: 'Forgotten' },
 ];
 
 export function MemoryPage() {
@@ -224,7 +225,7 @@ export function MemoryPage() {
 
   const all = useMemo(() => memories.data ?? [], [memories.data]);
   const counts = useMemo(() => {
-    const result: Record<MemoryStatus, number> = { active: 0, pending: 0, rejected: 0 };
+    const result: Record<MemoryStatus, number> = { active: 0, pending: 0, rejected: 0, forgotten: 0 };
     for (const memory of all) result[memory.status]++;
     return result;
   }, [all]);
@@ -251,7 +252,7 @@ export function MemoryPage() {
         <Typography variant="body1" color="text.secondary" sx={{ mb: 3, maxWidth: 620 }}>
           Facts about you that get added to the system prompt in chats with memory turned on.
           {memorySettings && enabledCount > memorySettings.maxInjected
-            ? ` Only the ${memorySettings.maxInjected} most recently updated are sent.`
+            ? ` Only the ${memorySettings.maxInjected} most related to each message are sent.`
             : ''}
         </Typography>
 
@@ -325,7 +326,9 @@ export function MemoryPage() {
                   ? 'No memories yet. Add one above, or accept a suggestion.'
                   : tab === 'pending'
                     ? 'No suggestions waiting for review.'
-                    : 'Dismissed suggestions show up here.'}
+                    : tab === 'forgotten'
+                      ? 'Memories a model forgot show up here, so you can restore them.'
+                      : 'Dismissed suggestions show up here.'}
             </Typography>
           )}
           {visible.map((memory) => (

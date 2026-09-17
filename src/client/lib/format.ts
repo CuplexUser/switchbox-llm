@@ -1,5 +1,11 @@
 import type { Conversation } from '../../shared/types.ts';
 
+/** A whole number from a text field, kept within bounds; `fallback` when the text isn't a number. */
+export function clampInt(value: string, min: number, max: number, fallback: number): number {
+  const parsed = Math.round(Number(value));
+  return value.trim() !== '' && Number.isFinite(parsed) ? Math.min(Math.max(parsed, min), max) : fallback;
+}
+
 export function formatTokens(count: number | null | undefined): string | null {
   if (count === null || count === undefined) return null;
   if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(count >= 10_000_000 ? 1 : 2)}M`;

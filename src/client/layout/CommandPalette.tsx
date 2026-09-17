@@ -35,7 +35,8 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
       { id: 'memory', label: 'Memory', icon: <PsychologyAltOutlinedIcon fontSize="small" />, run: go('/memory') },
       { id: 'settings', label: 'Settings', icon: <SettingsOutlinedIcon fontSize="small" />, run: go('/settings/general') },
       { id: 'providers', label: 'Provider settings', icon: <TuneRoundedIcon fontSize="small" />, run: go('/settings/providers') },
-      { id: 'prompts', label: 'System prompts', icon: <TuneRoundedIcon fontSize="small" />, run: go('/settings/prompts') },
+      { id: 'prompts', label: 'Profiles', icon: <TuneRoundedIcon fontSize="small" />, run: go('/settings/prompts') },
+      { id: 'tools', label: 'Tool settings', icon: <TuneRoundedIcon fontSize="small" />, run: go('/settings/tools') },
     ];
     const chats: Command[] = (conversations.data ?? []).map((conversation) => ({
       id: conversation.id,

@@ -14,7 +14,7 @@ import Typography from '@mui/material/Typography';
 import { useState } from 'react';
 import { Link as RouterLink, useNavigate } from 'react-router';
 import { MAX_PANES, modelKey } from '../../../shared/defaults.ts';
-import { PROVIDER_LABELS, type AppSettings, type ModelRef } from '../../../shared/types.ts';
+import { PROVIDER_LABELS, type AppSettings, type AttachmentRef, type ModelRef } from '../../../shared/types.ts';
 import {
   useCreateConversation,
   useModels,
@@ -74,7 +74,7 @@ function NewChatForm({ settings }: { settings: AppSettings }) {
     return models.data?.models.find((model) => modelKey(model) === modelKey(ref))?.name ?? ref.model;
   }
 
-  function start(text: string): void {
+  function start(text: string, attachments: AttachmentRef[]): void {
     createConversation.mutate(
       {
         persist,
@@ -85,7 +85,7 @@ function NewChatForm({ settings }: { settings: AppSettings }) {
       {
         onSuccess: (conversation) => {
           useChatStore.getState().hydrate(conversation.id, []);
-          void useChatStore.getState().send(conversation, text, conversation.panes.map((pane) => pane.id));
+          void useChatStore.getState().send(conversation, text, conversation.panes.map((pane) => pane.id), attachments);
           void navigate(`/c/${conversation.id}`);
         },
       },

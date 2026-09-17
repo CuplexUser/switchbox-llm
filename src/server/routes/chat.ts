@@ -1,11 +1,13 @@
 import { Hono } from 'hono';
-import { streamSSE } from 'hono/streaming';
 import { MAX_PANES } from '../../shared/defaults.ts';
 import type { StreamEvent, StreamRequest } from '../../shared/types.ts';
+import { streamSSE } from 'hono/streaming';
 import { badRequest, readJson, type Services } from '../context.ts';
 import { errorMessage } from '../services/chat.ts';
 
-export function chatRoutes({ chat }: Services): Hono {
+const ACTIONS = ['send', 'regenerate', 'edit'];
+
+export function chatRoutes({ chat, approvals }: Services): Hono {
   const app = new Hono();
   /** runId -> paneId -> controller, so a single pane can be stopped mid-run. */
   const runs = new Map<string, Map<string, AbortController>>();
@@ -13,9 +15,13 @@ export function chatRoutes({ chat }: Services): Hono {
   app.post('/chat/stream', async (c) => {
     const request = await readJson<StreamRequest>(c);
     if (!request.runId || !request.conversationId) throw badRequest('runId and conversationId are required');
-    if (!Array.isArray(request.targets) || request.targets.length === 0) throw badRequest('No panes to send to');
-    if (request.targets.length > MAX_PANES) throw badRequest(`At most ${MAX_PANES} panes per request`);
-    if (request.content !== null && !request.content?.trim()) throw badRequest('Message is empty');
+    if (!ACTIONS.includes(request.action)) throw badRequest('action must be send, regenerate or edit');
+    if (!Array.isArray(request.paneIds) || request.paneIds.length === 0) throw badRequest('No panes to send to');
+    if (request.paneIds.length > MAX_PANES) throw badRequest(`At most ${MAX_PANES} panes per request`);
+    if (request.attachmentIds !== undefined && !Array.isArray(request.attachmentIds)) throw badRequest('attachmentIds must be a list');
+    const hasFiles = (request.attachmentIds?.length ?? 0) > 0;
+    if (request.action === 'send' && !request.content?.trim() && !hasFiles) throw badRequest('Message is empty');
+    if (request.action === 'edit' && !request.content?.trim()) throw badRequest('Message is empty');
 
     const controllers = new Map<string, AbortController>();
     runs.set(request.runId, controllers);
@@ -33,8 +39,8 @@ export function chatRoutes({ chat }: Services): Hono {
       try {
         await chat.run(request, emit, controllers);
       } catch (error) {
-        for (const target of request.targets) {
-          await emit({ type: 'error', paneId: target.paneId, error: errorMessage(error), message: null });
+        for (const paneId of request.paneIds) {
+          await emit({ type: 'error', paneId, error: errorMessage(error), message: null });
         }
       } finally {
         runs.delete(request.runId);
@@ -52,6 +58,13 @@ export function chatRoutes({ chat }: Services): Hono {
       }
     }
     return c.json({ stopped: Boolean(controllers) });
+  });
+
+  /** Answers a tool call waiting for approval. */
+  app.post('/chat/approve', async (c) => {
+    const { id, approved } = await readJson<{ id?: string; approved?: boolean }>(c);
+    if (!id || typeof approved !== 'boolean') throw badRequest('id and approved are required');
+    return c.json({ answered: approvals.answer(id, approved) });
   });
 
   return app;

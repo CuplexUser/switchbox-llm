@@ -6,6 +6,8 @@ export const DEFAULT_GENERATION: GenerationParams = {
   temperature: null,
   topP: null,
   maxTokens: null,
+  reasoningEffort: null,
+  thinkingBudget: null,
 };
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -14,6 +16,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     density: 'comfortable',
     persistByDefault: true,
     sendOnEnter: true,
+    titleModel: null,
   },
   providers: {
     openrouter: { enabled: true, baseUrl: 'https://openrouter.ai/api/v1' },
@@ -39,17 +42,26 @@ export const DEFAULT_SETTINGS: AppSettings = {
     useByDefault: true,
     allowFetch: true,
     maxResults: 5,
+  },
+  agent: {
     maxToolRounds: 6,
+    maxParallelTools: 4,
+    keepToolResults: 'summary',
+    policies: {},
+  },
+  mcp: {
+    servers: [],
   },
 };
 
 /** Layers generation params left to right; later non-null values win. */
-export function mergeParams(...layers: Partial<GenerationParams>[]): GenerationParams {
+export function mergeParams(...layers: (Partial<GenerationParams> | null | undefined)[]): GenerationParams {
   const result: GenerationParams = { ...DEFAULT_GENERATION };
   for (const layer of layers) {
+    if (!layer) continue;
     for (const key of Object.keys(result) as (keyof GenerationParams)[]) {
       const value = layer[key];
-      if (value !== undefined && value !== null) result[key] = value;
+      if (value !== undefined && value !== null) (result as unknown as Record<string, unknown>)[key] = value;
     }
   }
   return result;

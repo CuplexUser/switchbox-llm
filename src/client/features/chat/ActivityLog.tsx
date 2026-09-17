@@ -1,4 +1,5 @@
 import ArticleOutlinedIcon from '@mui/icons-material/ArticleOutlined';
+import BuildOutlinedIcon from '@mui/icons-material/BuildOutlined';
 import ExpandMoreRoundedIcon from '@mui/icons-material/ExpandMoreRounded';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import PsychologyAltOutlinedIcon from '@mui/icons-material/PsychologyAltOutlined';
@@ -10,11 +11,29 @@ import Collapse from '@mui/material/Collapse';
 import Typography from '@mui/material/Typography';
 import { useState } from 'react';
 import type { ActivityItem, SearchEngine, Source } from '../../../shared/types.ts';
+import { fonts } from '../../theme/theme.ts';
 
 const ENGINE_LABELS: Record<SearchEngine, string> = {
   tavily: 'Tavily',
   brave: 'Brave',
   native: 'provider search',
+};
+
+type Step = Exclude<ActivityItem, { kind: 'notice' }>;
+type MemoryAction = Extract<ActivityItem, { kind: 'memory' }>['action'];
+
+const MEMORY_RUNNING: Record<MemoryAction, string> = {
+  save: 'Saving to memory',
+  forget: 'Removing from memory',
+  update: 'Updating a memory',
+  list: 'Reading memory',
+};
+
+const MEMORY_DONE: Record<MemoryAction, string> = {
+  save: 'Saved to memory',
+  forget: 'Removed from memory',
+  update: 'Updated in memory',
+  list: 'Read memory',
 };
 
 function hostOf(url: string): string {
@@ -40,21 +59,27 @@ function plural(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`;
 }
 
-function summarize(items: ActivityItem[], sources: Source[]): string {
-  const count = (kind: ActivityItem['kind'], failed: boolean) =>
-    items.filter((item) => item.kind === kind && Boolean('error' in item && item.error) === failed).length;
-  const searches = count('search', false);
-  const fetches = count('fetch', false);
-  const memories = (action: 'save' | 'forget') =>
-    items.filter((item) => item.kind === 'memory' && item.action === action && !item.error).length;
-  const saved = memories('save');
-  const forgotten = memories('forget');
-  const failures = count('search', true) + count('fetch', true) + count('memory', true);
+function succeeded(item: ActivityItem): boolean {
+  return !('error' in item && item.error) && !(item.kind === 'tool' && item.status === 'denied');
+}
+
+export function summarize(items: ActivityItem[], sources: Source[]): string {
+  const count = (test: (item: ActivityItem) => boolean) => items.filter(test).length;
+  const searches = count((item) => item.kind === 'search' && succeeded(item));
+  const fetches = count((item) => item.kind === 'fetch' && succeeded(item));
+  const memory = (action: MemoryAction) => count((item) => item.kind === 'memory' && item.action === action && succeeded(item));
+  const tools = count((item) => item.kind === 'tool' && succeeded(item) && item.done);
+  const denied = count((item) => item.kind === 'tool' && item.status === 'denied');
+  const failures = count((item) => item.kind !== 'notice' && 'error' in item && Boolean(item.error));
   const parts = [
     searches ? `Searched ${searches === 1 ? 'once' : `${searches} times`}` : null,
     fetches ? `read ${plural(fetches, 'page', 'pages')}` : null,
-    saved ? `saved ${plural(saved, 'memory', 'memories')}` : null,
-    forgotten ? `forgot ${plural(forgotten, 'memory', 'memories')}` : null,
+    memory('save') ? `saved ${plural(memory('save'), 'memory', 'memories')}` : null,
+    memory('update') ? `updated ${plural(memory('update'), 'memory', 'memories')}` : null,
+    memory('forget') ? `forgot ${plural(memory('forget'), 'memory', 'memories')}` : null,
+    memory('list') ? 'read memory' : null,
+    tools ? `used ${plural(tools, 'tool', 'tools')}` : null,
+    denied ? `${plural(denied, 'call', 'calls')} declined` : null,
     failures ? `${plural(failures, 'step', 'steps')} failed` : null,
     sources.length ? plural(sources.length, 'source', 'sources') : null,
   ].filter((part): part is string => Boolean(part));
@@ -66,30 +91,35 @@ function runningLabel(item: ActivityItem): string | null {
   if (item.done) return null;
   if (item.kind === 'search') return `Searching “${item.query}”`;
   if (item.kind === 'fetch') return `Reading ${shortUrl(item.url)}`;
-  if (item.kind === 'memory') return item.action === 'save' ? 'Saving to memory' : 'Removing from memory';
+  if (item.kind === 'memory') return MEMORY_RUNNING[item.action];
+  if (item.kind === 'tool') return item.status === 'waiting' ? `Waiting for approval: ${item.label}` : `Running ${item.label}`;
   return null;
 }
 
-function Step({ item }: { item: Exclude<ActivityItem, { kind: 'notice' }> }) {
-  const icon =
-    item.kind === 'search' ? (
-      <SearchRoundedIcon sx={{ fontSize: 15 }} />
-    ) : item.kind === 'memory' ? (
-      <PsychologyAltOutlinedIcon sx={{ fontSize: 15 }} />
-    ) : (
-      <ArticleOutlinedIcon sx={{ fontSize: 15 }} />
-    );
+function StepIcon({ item }: { item: Step }) {
+  const sx = { fontSize: 15 };
+  if (item.kind === 'search') return <SearchRoundedIcon sx={sx} />;
+  if (item.kind === 'memory') return <PsychologyAltOutlinedIcon sx={sx} />;
+  if (item.kind === 'tool') return <BuildOutlinedIcon sx={sx} />;
+  return <ArticleOutlinedIcon sx={sx} />;
+}
+
+function StepRow({ item }: { item: Step }) {
   let detail: string | null = null;
   if (item.error) detail = item.error;
+  else if (item.kind === 'tool' && item.status === 'denied') detail = 'You declined this call';
+  else if (item.kind === 'tool' && item.status === 'waiting') detail = 'Waiting for your approval';
   else if (item.kind === 'search' && item.resultCount !== null) detail = plural(item.resultCount, 'result', 'results');
   else if (!item.done) detail = 'In progress';
-  else if (item.kind === 'memory') detail = item.action === 'save' ? 'Saved to memory' : 'Removed from memory';
+  else if (item.kind === 'memory') detail = MEMORY_DONE[item.action];
 
   return (
     <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', py: 0.375 }}>
-      <Box sx={{ color: 'var(--sb-text-faint)', pt: '2px', flexShrink: 0 }}>{icon}</Box>
-      <Box sx={{ minWidth: 0 }}>
-        {item.kind === 'search' ? (
+      <Box sx={{ color: 'var(--sb-text-faint)', pt: '2px', flexShrink: 0 }}>
+        <StepIcon item={item} />
+      </Box>
+      <Box sx={{ minWidth: 0, flex: 1 }}>
+        {item.kind === 'search' && (
           <Typography variant="body2" sx={{ fontSize: '0.8125rem', overflowWrap: 'anywhere' }}>
             “{item.query}”
             <Box component="span" sx={{ color: 'var(--sb-text-faint)' }}>
@@ -97,11 +127,13 @@ function Step({ item }: { item: Exclude<ActivityItem, { kind: 'notice' }> }) {
               via {ENGINE_LABELS[item.engine]}
             </Box>
           </Typography>
-        ) : item.kind === 'memory' ? (
+        )}
+        {item.kind === 'memory' && (
           <Typography variant="body2" sx={{ fontSize: '0.8125rem', overflowWrap: 'anywhere' }}>
             {item.content}
           </Typography>
-        ) : (
+        )}
+        {item.kind === 'fetch' && (
           <Typography
             variant="body2"
             component="a"
@@ -113,11 +145,32 @@ function Step({ item }: { item: Exclude<ActivityItem, { kind: 'notice' }> }) {
             {shortUrl(item.url)}
           </Typography>
         )}
+        {item.kind === 'tool' && (
+          <>
+            <Typography variant="body2" sx={{ fontSize: '0.8125rem', fontWeight: 550 }}>
+              {item.label}
+            </Typography>
+            <Box
+              component="code"
+              sx={{ display: 'block', fontFamily: fonts.mono, fontSize: '0.75rem', color: 'var(--sb-text-muted)', overflowWrap: 'anywhere' }}
+            >
+              {item.args}
+            </Box>
+            {item.result && (
+              <Box
+                component="div"
+                sx={{ mt: 0.25, fontFamily: fonts.mono, fontSize: '0.75rem', color: 'var(--sb-text-faint)', overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}
+              >
+                → {item.result}
+              </Box>
+            )}
+          </>
+        )}
         {detail && (
           <Typography
             variant="caption"
             component="div"
-            sx={{ color: item.error ? 'error.main' : 'var(--sb-text-faint)', overflowWrap: 'anywhere' }}
+            sx={{ color: item.error || (item.kind === 'tool' && item.status === 'denied') ? 'error.main' : 'var(--sb-text-faint)', overflowWrap: 'anywhere' }}
           >
             {detail}
           </Typography>
@@ -127,13 +180,15 @@ function Step({ item }: { item: Exclude<ActivityItem, { kind: 'notice' }> }) {
   );
 }
 
-export function WebActivity({ items, sources, live = false }: { items: ActivityItem[]; sources: Source[]; live?: boolean }) {
+/** What a reply did along the way: searches, pages read, memory changes and tool calls, with its sources. */
+export function ActivityLog({ items, sources, live = false }: { items: ActivityItem[]; sources: Source[]; live?: boolean }) {
   const [open, setOpen] = useState(false);
   const notices = items.filter((item): item is Extract<ActivityItem, { kind: 'notice' }> => item.kind === 'notice');
-  const steps = items.filter((item): item is Exclude<ActivityItem, { kind: 'notice' }> => item.kind !== 'notice');
+  const steps = items.filter((item): item is Step => item.kind !== 'notice');
   const running = live ? steps.map(runningLabel).findLast(Boolean) : null;
   const hasDetail = steps.length > 0 || sources.length > 0;
   const memoryOnly = sources.length === 0 && steps.every((item) => item.kind === 'memory');
+  const toolsOnly = sources.length === 0 && steps.every((item) => item.kind === 'tool');
 
   if (notices.length === 0 && !hasDetail) return null;
 
@@ -185,6 +240,8 @@ export function WebActivity({ items, sources, live = false }: { items: ActivityI
               />
             ) : memoryOnly ? (
               <PsychologyAltOutlinedIcon sx={{ fontSize: 15 }} />
+            ) : toolsOnly ? (
+              <BuildOutlinedIcon sx={{ fontSize: 15 }} />
             ) : (
               <PublicRoundedIcon sx={{ fontSize: 15 }} />
             )}
@@ -199,7 +256,7 @@ export function WebActivity({ items, sources, live = false }: { items: ActivityI
           <Collapse in={open}>
             <Box sx={{ mt: 0.75, pl: 1.5, borderLeft: '2px solid var(--sb-border)' }}>
               {steps.map((item) => (
-                <Step key={item.id} item={item} />
+                <StepRow key={item.id} item={item} />
               ))}
               {sources.length > 0 && (
                 <Box sx={{ mt: steps.length ? 1 : 0 }}>

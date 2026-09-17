@@ -1,15 +1,45 @@
-import { PROVIDER_IDS, PROVIDER_LABELS, type ProviderId, type ProviderStatus } from '../../shared/types.ts';
+import { PROVIDER_IDS, PROVIDER_LABELS, type ModelInfo, type ProviderId, type ProviderStatus } from '../../shared/types.ts';
 import { apiKeyFor, KEY_REQUIRED } from '../env.ts';
 import type { SettingsService } from '../services/settings.ts';
 import { AnthropicProvider } from './anthropic.ts';
 import { OpenAiCompatibleProvider } from './openaiCompatible.ts';
 import { ProviderError, type Provider } from './types.ts';
 
+const MODEL_CACHE_MS = 10 * 60 * 1000;
+
 export class ProviderRegistry {
   private readonly settings: SettingsService;
+  private readonly modelCache = new Map<ProviderId, { at: number; models: ModelInfo[] }>();
 
   constructor(settings: SettingsService) {
     this.settings = settings;
+  }
+
+  /** Remembers a model list, e.g. after a connection test. */
+  cacheModels(id: ProviderId, models: ModelInfo[]): void {
+    this.modelCache.set(id, { at: Date.now(), models });
+  }
+
+  clearModelCache(): void {
+    this.modelCache.clear();
+  }
+
+  /** A provider's models, from a cache kept for ten minutes. */
+  async models(id: ProviderId, refresh = false): Promise<ModelInfo[]> {
+    const cached = this.modelCache.get(id);
+    if (!refresh && cached && Date.now() - cached.at < MODEL_CACHE_MS) return cached.models;
+    const models = await (await this.get(id)).listModels(AbortSignal.timeout(15_000));
+    this.cacheModels(id, models);
+    return models;
+  }
+
+  /** The last list fetched, however old, without touching the network. */
+  cachedModels(id: ProviderId): ModelInfo[] {
+    return this.modelCache.get(id)?.models ?? [];
+  }
+
+  cachedModel(id: ProviderId, model: string): ModelInfo | null {
+    return this.cachedModels(id).find((entry) => entry.model === model) ?? null;
   }
 
   async statuses(): Promise<ProviderStatus[]> {

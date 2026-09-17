@@ -6,12 +6,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../../shared/defaults.ts';
 import { addMissingColumns } from '../db/migrate.ts';
 import { conversationSchema, messageSchema } from '../db/schemas.ts';
-import { memoryRepos } from '../db/repos.ts';
-import { planWeb } from '../services/chat.ts';
+import { memoryRepos, openRepos } from '../db/repos.ts';
 import { seedSamplePrompts } from '../services/seed.ts';
+import { ToolRegistry } from '../tools/registry.ts';
+import { planWeb, webTools } from '../tools/web.ts';
 import { assertPublicUrl, htmlToText, isPrivateAddress } from './fetch.ts';
 import { createBraveProvider, createTavilyProvider, formatResults, planSearch } from './search.ts';
-import { runTool } from './tools.ts';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -36,25 +36,26 @@ describe('planWeb', () => {
   const web = DEFAULT_SETTINGS.web;
 
   it('offers nothing when the chat has web access off', () => {
-    expect(planWeb(false, web, 'openai', 'gpt-5', { tavily: 't', brave: null }).tools).toEqual([]);
+    expect(planWeb(false, web, 'openai', 'gpt-5', { tavily: 't', brave: null })).toMatchObject({ search: null, fetch: false });
   });
 
   it('offers web_search and web_fetch with a search key', () => {
     const plan = planWeb(true, web, 'ollama', 'llama3', { tavily: 't', brave: null });
-    expect(plan.tools.map((tool) => tool.name)).toEqual(['web_search', 'web_fetch']);
+    expect(plan.search?.name).toBe('tavily');
+    expect(plan.fetch).toBe(true);
     expect(plan.nativeSearch).toBe(false);
   });
 
   it('uses native search on providers that have it, and explains when they do not', () => {
     const native = planWeb(true, { ...web, searchMode: 'native' }, 'anthropic', 'claude-opus-5', NO_KEYS);
     expect(native.nativeSearch).toBe(true);
-    expect(native.tools.map((tool) => tool.name)).toEqual(['web_fetch']);
+    expect(native).toMatchObject({ search: null, fetch: true });
 
     const openai = planWeb(true, { ...web, searchMode: 'native' }, 'openai', 'gpt-5', NO_KEYS);
     expect(openai.note).toContain('search-enabled');
 
     const local = planWeb(true, { ...web, searchMode: 'auto', allowFetch: false }, 'lmstudio', 'qwen', NO_KEYS);
-    expect(local).toMatchObject({ nativeSearch: false, resolved: 'none', tools: [] });
+    expect(local).toMatchObject({ nativeSearch: false, resolved: 'none', search: null, fetch: false });
     expect(local.note).toContain('no built-in web search');
   });
 });
@@ -117,15 +118,22 @@ describe('fetch helpers', () => {
 
   it('reports tool errors back to the model instead of throwing', async () => {
     const items: unknown[] = [];
-    const result = await runTool(
+    const registry = new ToolRegistry([webTools()]);
+    const fetchTool = (await registry.all(DEFAULT_SETTINGS)).find((tool) => tool.spec.name === 'web_fetch');
+    const result = await registry.execute(
+      fetchTool,
       { id: '1', name: 'web_fetch', arguments: '{"url":"http://127.0.0.1:8787/api/settings"}' },
       {
-        search: null,
-        settings: DEFAULT_SETTINGS.web,
+        conversationId: 'c',
+        paneId: 'p',
+        settings: DEFAULT_SETTINGS,
+        web: { search: null, fetch: true, nativeSearch: false, resolved: 'none', note: null },
+        attachments: [],
         signal: new AbortController().signal,
         onActivity: (item) => items.push(item),
         onSource: () => {},
       },
+      { policy: 'auto', approve: async () => true },
     );
     expect(result.isError).toBe(true);
     expect(result.content).toContain('private');
@@ -154,12 +162,39 @@ describe('addMissingColumns', () => {
       { table: 'conversations', schema: conversationSchema, defaults: { web_access: '1' } },
       { table: 'messages', schema: messageSchema },
     ]);
-    expect(added).toEqual(['conversations.web_access']);
+    expect(added).toEqual(['conversations.web_access', 'conversations.tool_groups']);
 
     const check = new DatabaseSync(file);
     expect(check.prepare('SELECT web_access FROM conversations').get()).toEqual({ web_access: 1 });
     check.close();
     expect(addMissingColumns(file, [{ table: 'conversations', schema: conversationSchema, defaults: { web_access: '1' } }])).toEqual([]);
+  });
+});
+
+describe('openRepos', () => {
+  let dir: string | null = null;
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+    dir = null;
+  });
+
+  it('opens a database from before profiles, attachments and memory scopes', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'switchbox-open-'));
+    const file = join(dir, 'old.db');
+    const db = new DatabaseSync(file);
+    db.exec('CREATE TABLE system_prompts (id TEXT PRIMARY KEY, name TEXT NOT NULL, content TEXT NOT NULL, is_default INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)');
+    db.exec('CREATE TABLE memories (id TEXT PRIMARY KEY, content TEXT NOT NULL, category TEXT NOT NULL, enabled INTEGER NOT NULL, source TEXT NOT NULL, status TEXT NOT NULL, source_conversation_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)');
+    db.close();
+
+    const repos = await openRepos(file);
+    try {
+      const prompt = await repos.systemPrompts.create({ name: 'p', content: 'c', isDefault: false, tools: ['web'], maxToolRounds: 3, params: null });
+      expect((await repos.systemPrompts.findById(prompt.id))?.tools).toEqual(['web']);
+      const upload = await repos.attachments.create({ id: 'a1', conversationId: null, name: 'x.txt', mimeType: 'text/plain', size: 2, kind: 'text', data: new Uint8Array([104, 105]) });
+      expect(Array.from((await repos.attachments.findById(upload.id))?.data ?? [])).toEqual([104, 105]);
+    } finally {
+      await Promise.allSettled(Object.values(repos).map((repo) => repo.close()));
+    }
   });
 });
 

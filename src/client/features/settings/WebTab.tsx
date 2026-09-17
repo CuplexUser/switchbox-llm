@@ -6,6 +6,7 @@ import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import type { AppSettings, ResolvedSearch, SearchMode, WebStatus } from '../../../shared/types.ts';
 import { useSettings, useUpdateSettings, useWebStatus } from '../../api/hooks.ts';
+import { clampInt } from '../../lib/format.ts';
 import { Panel, SettingRow, SettingsHeader } from './Section.tsx';
 
 const RESOLVED_LABELS: Record<ResolvedSearch, string> = {
@@ -126,10 +127,6 @@ function planAuto(status: WebStatus): ResolvedSearch {
   return 'native';
 }
 
-function clampInt(value: string, min: number, max: number, fallback: number): number {
-  const parsed = Math.round(Number(value));
-  return Number.isFinite(parsed) ? Math.min(Math.max(parsed, min), max) : fallback;
-}
 
 export function WebTab() {
   const settings = useSettings();
@@ -197,20 +194,6 @@ export function WebTab() {
             value={web.maxResults}
             onChange={(event) => set('maxResults', clampInt(event.target.value, 1, 10, web.maxResults))}
             slotProps={{ htmlInput: { min: 1, max: 10 } }}
-            sx={{ width: 110 }}
-          />
-        </SettingRow>
-        <SettingRow
-          label="Tool rounds per reply"
-          description="How many times a model can search or read before it has to answer. Each round is a separate, billed request."
-          htmlFor="max-rounds"
-        >
-          <TextField
-            id="max-rounds"
-            type="number"
-            value={web.maxToolRounds}
-            onChange={(event) => set('maxToolRounds', clampInt(event.target.value, 1, 20, web.maxToolRounds))}
-            slotProps={{ htmlInput: { min: 1, max: 20 } }}
             sx={{ width: 110 }}
           />
         </SettingRow>

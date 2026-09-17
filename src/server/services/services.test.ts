@@ -1,64 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../../shared/defaults.ts';
-import type { ModelInfo, ProviderId, StreamEvent } from '../../shared/types.ts';
-import { memoryRepos, type Repos } from '../db/repos.ts';
-import type { ProviderRegistry } from '../providers/registry.ts';
-import { ProviderError, type ChatEvent, type ChatRequest, type Provider } from '../providers/types.ts';
-import { ChatService, cleanHistory, titleFrom } from './chat.ts';
-import { buildSystemPrompt, MemoryService, parseSuggestions } from './memory.ts';
-import { mergeDefaults, SettingsService } from './settings.ts';
+import type { ActivityItem } from '../../shared/types.ts';
+import { ProviderError } from '../providers/types.ts';
+import { cleanTitle, mapLimit, titleFrom } from './chat.ts';
+import { buildSystemPrompt, parseSuggestions, rankFacts, similarity } from './memory.ts';
+import { mergeDefaults } from './settings.ts';
+import { doneMessage, FakeProvider, seedConversation, send, setup } from './testing.ts';
 
-class FakeProvider implements Provider {
-  readonly id: ProviderId = 'openrouter';
-  readonly requests: ChatRequest[] = [];
-  private readonly reply: (request: ChatRequest) => ChatEvent[];
-
-  constructor(reply: (request: ChatRequest) => ChatEvent[]) {
-    this.reply = reply;
-  }
-
-  async listModels(): Promise<ModelInfo[]> {
-    return [];
-  }
-
-  async *streamChat(request: ChatRequest): AsyncIterable<ChatEvent> {
-    this.requests.push(request);
-    for (const event of this.reply(request)) {
-      if (request.signal.aborted) return;
-      yield event;
-    }
-  }
-}
-
-function setup(provider: Provider) {
-  const repos: Repos = memoryRepos();
-  const settings = new SettingsService(repos);
-  const registry = { get: async () => provider, build: async () => provider } as unknown as ProviderRegistry;
-  const memory = new MemoryService(repos, settings, registry);
-  const chat = new ChatService(repos, settings, registry, memory);
-  return { repos, settings, memory, chat };
-}
-
-async function seedConversation(repos: Repos, persist = true, useMemory = true, webAccess = false) {
-  const conversation = await repos.conversations.create({
-    title: 'New chat',
-    persist,
-    useMemory,
-    webAccess,
-    pinned: false,
-    archived: false,
-  });
-  const pane = await repos.panes.create({
-    conversationId: conversation.id,
-    position: 0,
-    provider: 'openrouter',
-    model: 'test/model',
-    systemPromptId: null,
-    systemPrompt: 'You are terse.',
-    params: { temperature: 0.3 },
-  });
-  return { conversation, pane };
-}
+const toolNames = (request: { tools?: { name: string }[] } | undefined) => (request?.tools ?? []).map((tool) => tool.name);
 
 describe('helpers', () => {
   it('builds a system prompt with a memory block', () => {
@@ -80,11 +29,56 @@ describe('helpers', () => {
     expect(parseSuggestions('["Plain string fact"]')).toEqual([{ content: 'Plain string fact', category: 'general' }]);
   });
 
-  it('titles, cleans history and merges settings defaults', () => {
+  it('titles chats and merges settings defaults', () => {
     expect(titleFrom('  Explain\nmonads please')).toBe('Explain');
     expect(titleFrom('x'.repeat(80))).toHaveLength(58);
-    expect(cleanHistory([{ role: 'assistant', content: '  ' }, { role: 'user', content: 'hi' }])).toHaveLength(1);
+    expect(cleanTitle('"Monads in Haskell."\n')).toBe('Monads in Haskell');
+    expect(cleanTitle('Title: Trip planning')).toBe('Trip planning');
     expect(mergeDefaults({ a: 1, nested: { b: 2, c: 3 } }, { nested: { b: 5 } })).toEqual({ a: 1, nested: { b: 5, c: 3 } });
+  });
+
+  it('limits how many tasks run at once and keeps result order', async () => {
+    let running = 0;
+    let peak = 0;
+    const results = await mapLimit([30, 10, 20, 5], 2, async (ms, index) => {
+      running++;
+      peak = Math.max(peak, running);
+      await new Promise((resolve) => setTimeout(resolve, ms));
+      running--;
+      return index;
+    });
+    expect(results).toEqual([0, 1, 2, 3]);
+    expect(peak).toBe(2);
+  });
+});
+
+function at(day: number): Date {
+  return new Date(2026, 0, day);
+}
+
+describe('memory relevance', () => {
+  const facts = [
+    { content: 'Prefers metric units', category: 'preferences', updatedAt: at(5) },
+    { content: 'Lives in Oslo', category: 'background', updatedAt: at(1) },
+    { content: 'Works on a Rust compiler', category: 'projects', updatedAt: at(3) },
+  ];
+
+  it('keeps everything, newest first, when under the limit', () => {
+    expect(rankFacts(facts, 'anything', 5).map((fact) => fact.content)).toEqual([
+      'Prefers metric units',
+      'Works on a Rust compiler',
+      'Lives in Oslo',
+    ]);
+  });
+
+  it('picks the facts that share words with the message when over the limit', () => {
+    expect(rankFacts(facts, 'What is the weather in Oslo today?', 1).map((fact) => fact.content)).toEqual(['Lives in Oslo']);
+    expect(rankFacts(facts, 'hello', 2).map((fact) => fact.content)).toEqual(['Prefers metric units', 'Works on a Rust compiler']);
+  });
+
+  it('scores wording overlap', () => {
+    expect(similarity('Lives in Oslo', 'lives in oslo!')).toBe(1);
+    expect(similarity('Likes tea', 'Drives a van')).toBe(0);
   });
 });
 
@@ -95,6 +89,7 @@ describe('SettingsService', () => {
     const all = await settings.getAll();
     expect(all.memory.maxInjected).toBe(5);
     expect(all.general.sendOnEnter).toBe(true);
+    expect(all.agent.maxToolRounds).toBe(6);
   });
 });
 
@@ -106,31 +101,14 @@ describe('ChatService', () => {
       { type: 'usage', inputTokens: 12, outputTokens: 2 },
       { type: 'finish', reason: 'stop' },
     ]);
-    const { repos, chat } = setup(provider);
+    const services = setup(provider);
+    const { repos } = services;
     const { conversation, pane } = await seedConversation(repos);
-    await repos.memories.create({
-      content: 'Name is Sam',
-      category: 'general',
-      enabled: true,
-      source: 'manual',
-      status: 'active',
-      sourceConversationId: null,
-    });
-    await repos.memories.create({
-      content: 'Pending fact',
-      category: 'general',
-      enabled: true,
-      source: 'suggested',
-      status: 'pending',
-      sourceConversationId: null,
-    });
+    const memory = { category: 'general', enabled: true, scope: null, sourceConversationId: null };
+    await repos.memories.create({ ...memory, content: 'Name is Sam', source: 'manual', status: 'active' });
+    await repos.memories.create({ ...memory, content: 'Pending fact', source: 'suggested', status: 'pending' });
 
-    const events: StreamEvent[] = [];
-    await chat.run(
-      { runId: 'r1', conversationId: conversation.id, content: 'Hello', targets: [{ paneId: pane.id, history: [] }] },
-      (event) => void events.push(event),
-      new Map(),
-    );
+    const events = await send(services, conversation.id, [pane.id], 'Hello');
 
     const request = provider.requests[0];
     expect(request?.system).toContain('You are terse.');
@@ -139,31 +117,28 @@ describe('ChatService', () => {
     expect(request?.params.temperature).toBe(0.3);
     expect(request?.messages).toEqual([{ role: 'user', content: 'Hello' }]);
 
-    const done = events.find((event) => event.type === 'done');
-    expect(done?.type === 'done' && done.message.content).toBe('Hi there');
-    expect(done?.type === 'done' && done.message.tokensOut).toBe(2);
+    const message = doneMessage(events);
+    expect(message?.content).toBe('Hi there');
+    expect(message?.tokensOut).toBe(2);
+    expect(message).not.toHaveProperty('trace');
 
     const stored = await repos.messages.findMany({ where: { conversationId: conversation.id } });
-    expect(stored.map((message) => message.role).toSorted()).toEqual(['assistant', 'user']);
+    expect(stored.map((row) => row.role).toSorted()).toEqual(['assistant', 'user']);
     expect((await repos.conversations.findById(conversation.id))?.title).toBe('Hello');
   });
 
-  it('does not persist temporary conversations and reports provider errors per pane', async () => {
+  it('keeps temporary chats in memory and reports provider errors per pane', async () => {
     const provider = new FakeProvider(() => {
       throw new Error('boom');
     });
-    const { repos, chat } = setup(provider);
-    const { conversation, pane } = await seedConversation(repos, false, false);
+    const services = setup(provider);
+    const { conversation, pane } = await seedConversation(services.repos, { persist: false, useMemory: false });
 
-    const events: StreamEvent[] = [];
-    await chat.run(
-      { runId: 'r2', conversationId: conversation.id, content: 'Hello', targets: [{ paneId: pane.id, history: [] }] },
-      (event) => void events.push(event),
-      new Map(),
-    );
+    const events = await send(services, conversation.id, [pane.id], 'Hello');
 
     expect(events.map((event) => event.type)).toEqual(['user', 'start', 'error']);
-    expect(await repos.messages.count()).toBe(0);
+    expect(await services.repos.messages.count()).toBe(0);
+    expect((await services.store.list(conversation, pane.id)).map((row) => row.role)).toEqual(['user', 'assistant']);
   });
 
   it('marks a stopped pane as aborted and keeps the partial text', async () => {
@@ -172,29 +147,24 @@ describe('ChatService', () => {
       controllers.values().next().value?.abort();
       return [{ type: 'text', text: 'never' }];
     });
-    const { repos, chat } = setup(provider);
-    const { conversation, pane } = await seedConversation(repos);
+    const services = setup(provider);
+    const { conversation, pane } = await seedConversation(services.repos);
 
-    const events: StreamEvent[] = [];
-    await chat.run(
-      { runId: 'r3', conversationId: conversation.id, content: 'Go', targets: [{ paneId: pane.id, history: [] }] },
-      (event) => void events.push(event),
-      controllers,
+    const events = await send(services, conversation.id, [pane.id], 'Go', {}, controllers);
+    expect(doneMessage(events)?.finishReason).toBe('aborted');
+  });
+
+  it('uses the title model when one is set', async () => {
+    const provider = new FakeProvider((request) =>
+      request.system.startsWith('Write a short title') ? [{ type: 'text', text: '"Planning a trip to Oslo."' }] : [{ type: 'text', text: 'Sure.' }],
     );
-    const done = events.find((event) => event.type === 'done');
-    expect(done?.type === 'done' && done.message.finishReason).toBe('aborted');
+    const services = setup(provider);
+    await services.settings.set('general', { ...DEFAULT_SETTINGS.general, titleModel: { provider: 'openrouter', model: 'cheap' } });
+    const { conversation, pane } = await seedConversation(services.repos, { useMemory: false });
+    await send(services, conversation.id, [pane.id], 'I want to plan a trip to Oslo next month');
+    expect((await services.repos.conversations.findById(conversation.id))?.title).toBe('Planning a trip to Oslo');
   });
 });
-
-async function runOnce(chat: ChatService, conversationId: string, paneId: string) {
-  const events: StreamEvent[] = [];
-  await chat.run(
-    { runId: 'r', conversationId, content: 'Weather in Oslo?', targets: [{ paneId, history: [] }] },
-    (event) => void events.push(event),
-    new Map(),
-  );
-  return events;
-}
 
 describe('ChatService web tools', () => {
   afterEach(() => {
@@ -220,43 +190,50 @@ describe('ChatService web tools', () => {
             { type: 'tool_call', call: { id: 'c1', name: 'web_search', arguments: '{"query":"Oslo weather"}' } },
           ],
     );
-    const { repos, chat } = setup(provider);
-    const { conversation, pane } = await seedConversation(repos, true, false, true);
+    const services = setup(provider);
+    const { conversation, pane } = await seedConversation(services.repos, { useMemory: false, webAccess: true });
 
-    const events = await runOnce(chat, conversation.id, pane.id);
+    const events = await send(services, conversation.id, [pane.id], 'Weather in Oslo?');
 
     expect(provider.requests).toHaveLength(2);
-    expect(provider.requests[0]?.tools?.map((tool) => tool.name)).toEqual(['web_search', 'web_fetch']);
+    expect(toolNames(provider.requests[0])).toEqual(expect.arrayContaining(['web_search', 'web_fetch']));
     expect(provider.requests[0]?.system).toContain("Today's date is");
+    expect(provider.requests[0]?.system).toContain('<tool_output>');
     const toolMessage = provider.requests[1]?.messages.find((message) => message.role === 'tool');
     expect(toolMessage?.role === 'tool' && toolMessage.content).toContain('Sunny, 21 degrees');
+    expect(toolMessage?.role === 'tool' && toolMessage.content).toMatch(/^<tool_output tool="web_search">/);
 
-    const done = events.find((event) => event.type === 'done');
-    const message = done?.type === 'done' ? done.message : null;
+    const message = doneMessage(events);
     expect(message?.content).toBe('Let me check.\n\nSunny.');
     expect(message?.tokensIn).toBe(10);
     expect(message?.activity?.items).toMatchObject([{ kind: 'search', engine: 'tavily', query: 'Oslo weather', resultCount: 1, done: true }]);
     expect(message?.activity?.sources).toEqual([{ url: 'https://yr.test/oslo', title: 'Yr' }]);
     expect(events.filter((event) => event.type === 'activity')).toHaveLength(2);
 
-    const stored = await repos.messages.findById(message?.id ?? '');
+    const stored = await services.repos.messages.findById(message?.id ?? '');
     expect(stored?.activity).toEqual(message?.activity);
+    expect(Array.isArray(stored?.trace)).toBe(true);
   });
 
-  it('retries without tools when the model rejects them', async () => {
+  it('retries without tools when the model rejects them, and remembers it', async () => {
     vi.stubEnv('TAVILY_API_KEY', '');
     vi.stubEnv('BRAVE_API_KEY', '');
     const provider = new FakeProvider((request) => {
       if (request.tools?.length) throw new ProviderError('Ollama returned 400: model does not support tools', 400);
       return [{ type: 'text', text: 'Offline answer.' }];
     });
-    const { repos, chat } = setup(provider);
-    const { conversation, pane } = await seedConversation(repos, false, false, true);
+    const services = setup(provider);
+    const { conversation, pane } = await seedConversation(services.repos, { persist: false, useMemory: false, webAccess: true });
 
-    const events = await runOnce(chat, conversation.id, pane.id);
-    const done = events.find((event) => event.type === 'done');
-    expect(done?.type === 'done' && done.message.content).toBe('Offline answer.');
-    expect(done?.type === 'done' && done.message.activity?.items.map((item) => item.kind)).toEqual(['notice']);
+    const first = await send(services, conversation.id, [pane.id], 'Weather?');
+    expect(doneMessage(first)?.content).toBe('Offline answer.');
+    expect(doneMessage(first)?.activity?.items.map((item) => item.kind)).toEqual(['notice']);
+    expect(provider.requests).toHaveLength(2);
+
+    await send(services, conversation.id, [pane.id], 'And tomorrow?');
+    // The second reply goes straight to a request without tools.
+    expect(provider.requests).toHaveLength(3);
+    expect(provider.requests[2]?.tools).toEqual([]);
   });
 
   it('stops calling tools after the round limit and asks for an answer', async () => {
@@ -265,15 +242,15 @@ describe('ChatService web tools', () => {
     const provider = new FakeProvider(() => [
       { type: 'tool_call', call: { id: `c${Math.random()}`, name: 'web_fetch', arguments: '{"url":"http://127.0.0.1/"}' } },
     ]);
-    const { repos, settings, chat } = setup(provider);
-    await settings.set('web', { ...DEFAULT_SETTINGS.web, maxToolRounds: 2 });
-    const { conversation, pane } = await seedConversation(repos, false, false, true);
+    const services = setup(provider);
+    await services.settings.set('agent', { ...DEFAULT_SETTINGS.agent, maxToolRounds: 2 });
+    const { conversation, pane } = await seedConversation(services.repos, { persist: false, useMemory: false, webAccess: true });
 
-    await runOnce(chat, conversation.id, pane.id);
+    await send(services, conversation.id, [pane.id], 'Read it');
     // Two real rounds, one round answered with the limit notice, then a final turn that is cut off.
     expect(provider.requests).toHaveLength(4);
     const last = provider.requests.at(-1)?.messages.at(-1);
-    expect(last?.role === 'tool' && last.content).toContain('Research limit reached');
+    expect(last?.role === 'tool' && last.content).toContain('Tool limit reached');
   });
 });
 
@@ -289,63 +266,100 @@ describe('ChatService memory tools', () => {
             },
           ],
     );
-    const { repos, chat } = setup(provider);
-    const { conversation, pane } = await seedConversation(repos, true, true);
+    const services = setup(provider);
+    const { repos } = services;
+    const { conversation, pane } = await seedConversation(repos);
     const second = await repos.panes.create({ ...pane, id: undefined, position: 1 } as never);
 
-    const events: StreamEvent[] = [];
-    await chat.run(
-      {
-        runId: 'm',
-        conversationId: conversation.id,
-        content: 'Remember that my dog is called Rex',
-        targets: [
-          { paneId: pane.id, history: [] },
-          { paneId: second.id, history: [] },
-        ],
-      },
-      (event) => void events.push(event),
-      new Map(),
-    );
+    const events = await send(services, conversation.id, [pane.id, second.id], 'Remember that my dog is called Rex');
 
-    expect(provider.requests[0]?.tools?.map((tool) => tool.name)).toEqual(['memory_save', 'memory_forget']);
+    expect(toolNames(provider.requests[0])).toEqual(expect.arrayContaining(['memory_save', 'memory_update', 'memory_forget', 'memory_list']));
     expect(provider.requests[0]?.system).toContain('long-term memory');
     const saved = await repos.memories.findMany();
     expect(saved).toMatchObject([{ content: 'Has a dog named Rex', category: 'background', source: 'model', status: 'active' }]);
-    const done = events.find((event) => event.type === 'done');
-    expect(done?.type === 'done' && done.message.activity?.items).toMatchObject([{ kind: 'memory', action: 'save', done: true }]);
+    expect(await repos.memoryHistory.count({ where: { memoryId: saved[0]?.id ?? '' } })).toBe(1);
+    expect(doneMessage(events)?.activity?.items).toMatchObject([{ kind: 'memory', action: 'save', done: true }]);
   });
 
   it('leaves memory tools out when the chat has memory off', async () => {
     const provider = new FakeProvider(() => [{ type: 'text', text: 'Hi' }]);
-    const { repos, chat } = setup(provider);
-    const { conversation, pane } = await seedConversation(repos, false, false);
-    await runOnce(chat, conversation.id, pane.id);
-    expect(provider.requests[0]?.tools).toEqual([]);
+    const services = setup(provider);
+    const { conversation, pane } = await seedConversation(services.repos, { persist: false, useMemory: false });
+    await send(services, conversation.id, [pane.id], 'Hi');
+    expect(toolNames(provider.requests[0]).some((name) => name.startsWith('memory_'))).toBe(false);
     expect(provider.requests[0]?.system).not.toContain('long-term memory');
   });
 
-  it('forgets a single matching memory and lists candidates when ambiguous', async () => {
-    const { repos, memory } = setup(new FakeProvider(() => []));
+  it('forgets a single match into Forgotten, updates, and lists candidates when ambiguous', async () => {
+    const services = setup(new FakeProvider(() => []));
+    const { repos, tools, settings } = services;
     for (const content of ['Lives in Oslo', 'Works in Oslo', 'Likes tea']) {
-      await repos.memories.create({ content, category: 'general', enabled: true, source: 'manual', status: 'active', sourceConversationId: null });
+      await repos.memories.create({ content, category: 'general', enabled: true, source: 'manual', status: 'active', scope: null, sourceConversationId: null });
     }
-    const activity: unknown[] = [];
-    const ambiguous = await memory.runTool({ id: 'f1', name: 'memory_forget', arguments: '{"content":"oslo"}' }, 'c', (item) => activity.push(item));
+    const all = await tools.all(await settings.getAll());
+    const activity: ActivityItem[] = [];
+    const context = {
+      conversationId: 'c',
+      paneId: 'p',
+      settings: await settings.getAll(),
+      web: { search: null, fetch: false, nativeSearch: false, resolved: 'none' as const, note: null },
+      attachments: [],
+      signal: new AbortController().signal,
+      onActivity: (item: ActivityItem) => activity.push(item),
+      onSource: () => {},
+    };
+    const run = (name: string, args: object) =>
+      tools.execute(all.find((tool) => tool.spec.name === name), { id: 'x', name, arguments: JSON.stringify(args) }, context, {
+        policy: 'auto',
+        approve: async () => true,
+      });
+
+    const ambiguous = await run('memory_forget', { content: 'oslo' });
     expect(ambiguous.isError).toBe(true);
     expect(ambiguous.content).toContain('Works in Oslo');
 
-    const removed = await memory.runTool({ id: 'f2', name: 'memory_forget', arguments: '{"content":"likes tea."}' }, 'c', () => {});
-    expect(removed).toEqual({ content: 'Removed from memory: "Likes tea"', isError: false });
-    expect(await repos.memories.count()).toBe(2);
+    expect(await run('memory_forget', { content: 'likes tea.' })).toEqual({ content: 'Removed from memory: "Likes tea"', isError: false });
+    expect((await repos.memories.findMany({ where: { status: 'forgotten' } })).map((row) => row.content)).toEqual(['Likes tea']);
+
+    const updated = await run('memory_update', { memory: 'Lives in Oslo', content: 'Lives in Bergen' });
+    expect(updated.isError).toBe(false);
+    const history = await repos.memoryHistory.findMany({ where: { action: 'updated' } });
+    expect(history).toMatchObject([{ content: 'Lives in Bergen', previousContent: 'Lives in Oslo', actor: 'model' }]);
+
+    const invalid = await run('memory_save', { content: 5 });
+    expect(invalid).toMatchObject({ isError: true });
+    expect(invalid.content).toContain('arguments.content should be string');
+  });
+
+  it('only sends memories scoped to the pane profile or to every chat', async () => {
+    const provider = new FakeProvider(() => [{ type: 'text', text: 'Ok' }]);
+    const services = setup(provider);
+    const { repos } = services;
+    const profile = await repos.systemPrompts.create({ name: 'Coder', content: 'Code well.', isDefault: false, tools: null, maxToolRounds: null, params: null });
+    const other = await repos.systemPrompts.create({ name: 'Writer', content: 'Write well.', isDefault: false, tools: null, maxToolRounds: null, params: null });
+    const base = { category: 'general', enabled: true, source: 'manual', status: 'active', sourceConversationId: null };
+    await repos.memories.create({ ...base, content: 'Everywhere fact', scope: null });
+    await repos.memories.create({ ...base, content: 'Coder fact', scope: profile.id });
+    await repos.memories.create({ ...base, content: 'Writer fact', scope: other.id });
+    const { conversation, pane } = await seedConversation(repos);
+    await repos.panes.update(pane.id, { systemPromptId: profile.id, systemPrompt: null });
+
+    await send(services, conversation.id, [pane.id], 'Hi');
+    const system = provider.requests[0]?.system ?? '';
+    expect(system).toContain('Code well.');
+    expect(system).toContain('Everywhere fact');
+    expect(system).toContain('Coder fact');
+    expect(system).not.toContain('Writer fact');
   });
 });
 
 describe('MemoryService.suggest', () => {
-  it('stores new facts as pending and skips duplicates', async () => {
-    const provider = new FakeProvider(() => [
-      { type: 'text', text: '[{"content":"Prefers dark mode","category":"preferences"},{"content":"likes tea!"}]' },
-    ]);
+  it('stores new facts as pending, skips duplicates and records failures', async () => {
+    let fail = false;
+    const provider = new FakeProvider(() => {
+      if (fail) throw new Error('suggestion model down');
+      return [{ type: 'text', text: '[{"content":"Prefers dark mode","category":"preferences"},{"content":"likes tea!"}]' }];
+    });
     const { repos, settings, memory } = setup(provider);
     await settings.set('memory', {
       useByDefault: true,
@@ -353,21 +367,30 @@ describe('MemoryService.suggest', () => {
       suggestionModel: { provider: 'openrouter', model: 'cheap' },
       maxInjected: 50,
     });
-    await repos.memories.create({
-      content: 'Likes tea',
-      category: 'general',
-      enabled: true,
-      source: 'manual',
-      status: 'active',
-      sourceConversationId: null,
-    });
+    await repos.memories.create({ content: 'Likes tea', category: 'general', enabled: true, source: 'manual', status: 'active', scope: null, sourceConversationId: null });
 
-    const added = await memory.suggest('c1', [
-      { role: 'user', content: 'I prefer dark mode' },
-      { role: 'assistant', content: 'Noted' },
-    ]);
-    expect(added).toBe(1);
+    const exchange = [
+      { role: 'user' as const, content: 'I prefer dark mode' },
+      { role: 'assistant' as const, content: 'Noted' },
+    ];
+    expect(await memory.suggest('c1', exchange)).toBe(1);
     const pending = await repos.memories.findMany({ where: { status: 'pending' } });
     expect(pending.map((row) => row.content)).toEqual(['Prefers dark mode']);
+    expect(memory.suggestionStatus()).toMatchObject({ lastAdded: 1, lastError: null });
+
+    fail = true;
+    await expect(memory.suggest('c1', exchange)).rejects.toThrow('suggestion model down');
+    expect(memory.suggestionStatus().lastError).toBe('suggestion model down');
+  });
+
+  it('finds near-duplicate memories', async () => {
+    const { repos, memory } = setup(new FakeProvider(() => []));
+    const base = { category: 'general', enabled: true, source: 'manual', status: 'active', scope: null, sourceConversationId: null };
+    await repos.memories.create({ ...base, content: 'Prefers metric units' });
+    await repos.memories.create({ ...base, content: 'Prefers metric units always' });
+    await repos.memories.create({ ...base, content: 'Has two cats' });
+    const pairs = await memory.duplicates();
+    expect(pairs).toHaveLength(1);
+    expect([pairs[0]?.first.content, pairs[0]?.second.content].toSorted()).toEqual(['Prefers metric units', 'Prefers metric units always']);
   });
 });

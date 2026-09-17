@@ -14,9 +14,19 @@ export interface ToolCall {
   arguments: string;
 }
 
+/** A file sent with a user message: base64 bytes for images and PDFs, decoded text for text files. */
+export interface LoopAttachment {
+  id: string;
+  name: string;
+  mimeType: string;
+  kind: 'image' | 'pdf' | 'text';
+  data?: string;
+  text?: string;
+}
+
 /** Provider-neutral conversation turn, including the tool-use round trips of one reply. */
 export type LoopMessage =
-  | { role: 'user'; content: string }
+  | { role: 'user'; content: string; attachments?: LoopAttachment[] }
   | {
       role: 'assistant';
       content: string;
@@ -89,14 +99,55 @@ export async function errorFromResponse(label: string, response: Response): Prom
   return new ProviderError(`${label} returned ${response.status}: ${detail}`, response.status);
 }
 
-/** Wraps fetch so a refused connection reads as "is the server running" rather than "fetch failed". */
-export async function providerFetch(label: string, url: string, init: RequestInit): Promise<Response> {
-  try {
-    return await fetch(url, init);
-  } catch (error) {
-    if (init.signal?.aborted) throw error;
-    const cause = error instanceof Error && error.cause instanceof Error ? `: ${error.cause.message}` : '';
-    throw new ProviderError(`Could not reach ${label} at ${new URL(url).origin}${cause}`);
+/** Statuses worth another try: rate limits and overloaded or restarting upstreams. */
+const RETRY_STATUSES = new Set([408, 429, 502, 503, 504, 529]);
+const MAX_RETRY_DELAY_MS = 30_000;
+
+export function retryDelay(response: Response, attempt: number): number {
+  const header = response.headers.get('retry-after');
+  const seconds = header === null ? Number.NaN : Number(header);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1000, MAX_RETRY_DELAY_MS);
+  const date = header ? Date.parse(header) : Number.NaN;
+  if (Number.isFinite(date)) return Math.min(Math.max(date - Date.now(), 0), MAX_RETRY_DELAY_MS);
+  // 1s, 3s, 9s with some jitter so parallel panes don't retry in lockstep.
+  return Math.min(1000 * 3 ** attempt * (0.8 + Math.random() * 0.4), MAX_RETRY_DELAY_MS);
+}
+
+function sleep(ms: number, signal?: AbortSignal | null): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
+    const timer = setTimeout(done, ms);
+    function done() {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }
+    function onAbort() {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    }
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+/**
+ * Wraps fetch so a refused connection reads as "is the server running" rather than "fetch failed",
+ * and retries rate limits and overload errors. Retries happen before any of the body is read, so a
+ * streamed reply is never started twice.
+ */
+export async function providerFetch(label: string, url: string, init: RequestInit, retries = 3): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    let response: Response;
+    try {
+      response = await fetch(url, init);
+    } catch (error) {
+      if (init.signal?.aborted) throw error;
+      const cause = error instanceof Error && error.cause instanceof Error ? `: ${error.cause.message}` : '';
+      throw new ProviderError(`Could not reach ${label} at ${new URL(url).origin}${cause}`);
+    }
+    if (!RETRY_STATUSES.has(response.status) || attempt >= retries) return response;
+    const delay = retryDelay(response, attempt);
+    await response.body?.cancel().catch(() => {});
+    await sleep(delay, init.signal);
   }
 }
 

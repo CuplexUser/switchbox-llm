@@ -10,7 +10,10 @@ import type {
 } from '../../shared/types.ts';
 import type { Repos } from '../db/repos.ts';
 import type { UsageRecordRow } from '../db/schemas.ts';
+import { createLogger } from '../log.ts';
 import type { ProviderRegistry } from '../providers/registry.ts';
+
+const log = createLogger('usage');
 
 export const USAGE_RANGES: UsageRange[] = ['7d', '30d', '90d', 'all'];
 const RANGE_DAYS: Record<Exclude<UsageRange, 'all'>, number> = { '7d': 7, '30d': 30, '90d': 90 };
@@ -285,7 +288,7 @@ export class UsageService {
       const book = new PriceBook(await provider.listModels(AbortSignal.timeout(10_000)));
       this.prices = { at: Date.now(), ttl: PRICES_TTL_MS, book };
     } catch (error) {
-      console.warn('[usage] could not load prices:', error instanceof Error ? error.message : String(error));
+      log.warn('could not load prices', { error: error instanceof Error ? error.message : String(error) });
       this.prices = { at: Date.now(), ttl: PRICES_RETRY_MS, book: this.prices?.book ?? new PriceBook([]) };
     }
     return this.prices.book;

@@ -1,5 +1,14 @@
 import { create } from 'zustand';
-import type { ActivityItem, ChatTurn, ConversationDetail, Message, Source, StreamEvent } from '../../shared/types.ts';
+import type {
+  ActivityItem,
+  ApprovalRequest,
+  AttachmentRef,
+  ConversationDetail,
+  Message,
+  Source,
+  StreamAction,
+  StreamEvent,
+} from '../../shared/types.ts';
 import { api } from '../api/client.ts';
 import { streamChat } from '../api/stream.ts';
 
@@ -11,6 +20,8 @@ export interface LiveReply {
   firstTokenAt: number | null;
   activity: ActivityItem[];
   sources: Source[];
+  /** Tool calls waiting for the user to approve or decline. */
+  approvals: ApprovalRequest[];
 }
 
 export interface PaneRuntime {
@@ -24,11 +35,22 @@ interface ConversationRuntime {
   panes: Record<string, PaneRuntime>;
 }
 
+interface RunInput {
+  action: StreamAction;
+  content: string | null;
+  paneIds: string[];
+  attachmentIds?: string[];
+  messageId?: string;
+}
+
 interface ChatState {
   conversations: Record<string, ConversationRuntime>;
   hydrate: (conversationId: string, messages: Message[]) => void;
-  send: (conversation: ConversationDetail, content: string, paneIds: string[]) => Promise<void>;
+  send: (conversation: ConversationDetail, content: string, paneIds: string[], attachments?: AttachmentRef[]) => Promise<void>;
   regenerate: (conversation: ConversationDetail, paneId: string) => Promise<void>;
+  edit: (conversation: ConversationDetail, paneId: string, messageId: string, content: string) => Promise<void>;
+  approve: (id: string, approved: boolean) => void;
+  setPreferred: (conversationId: string, message: Message, preferred: boolean) => Promise<void>;
   stop: (conversationId: string, paneId?: string) => void;
   clearPane: (conversation: ConversationDetail, paneId: string) => Promise<void>;
   forget: (conversationId: string) => void;
@@ -38,10 +60,26 @@ interface ChatState {
 const EMPTY_PANE: PaneRuntime = { messages: [], live: null };
 const controllers = new Map<string, AbortController>();
 
-function historyOf(messages: Message[]): ChatTurn[] {
-  return messages
-    .filter((message) => message.content.trim().length > 0)
-    .map((message) => ({ role: message.role, content: message.content }));
+/** Applies a streamed event to a pane's messages. Exported for tests. */
+export function applyMessageEvent(messages: Message[], event: StreamEvent): Message[] {
+  switch (event.type) {
+    case 'user': {
+      const index = messages.findIndex((message) => message.id === event.message.id);
+      if (index === -1) return [...messages, event.message];
+      return messages.map((message, position) => (position === index ? event.message : message));
+    }
+    case 'truncate': {
+      const index = messages.findIndex((message) => message.id === event.messageId);
+      return index === -1 ? messages : messages.slice(0, index + 1);
+    }
+    default:
+      return messages;
+  }
+}
+
+export function upsertActivity(items: ActivityItem[], item: ActivityItem): ActivityItem[] {
+  const exists = items.some((entry) => entry.id === item.id);
+  return exists ? items.map((entry) => (entry.id === item.id ? item : entry)) : [...items, item];
 }
 
 export const useChatStore = create<ChatState>((set, get) => {
@@ -58,6 +96,10 @@ export const useChatStore = create<ChatState>((set, get) => {
     });
   }
 
+  function updateLive(conversationId: string, paneId: string, update: (live: LiveReply) => LiveReply): void {
+    updatePane(conversationId, paneId, (pane) => (pane.live ? { ...pane, live: update(pane.live) } : pane));
+  }
+
   function setRun(conversationId: string, runId: string | null): void {
     set((state) => {
       const conversation = state.conversations[conversationId] ?? { hydrated: true, runId: null, panes: {} };
@@ -65,11 +107,7 @@ export const useChatStore = create<ChatState>((set, get) => {
     });
   }
 
-  async function run(
-    conversation: ConversationDetail,
-    content: string | null,
-    targets: { paneId: string; history: ChatTurn[] }[],
-  ): Promise<void> {
+  async function run(conversation: ConversationDetail, input: RunInput): Promise<void> {
     const conversationId = conversation.id;
     const runId = crypto.randomUUID();
     const controller = new AbortController();
@@ -77,10 +115,10 @@ export const useChatStore = create<ChatState>((set, get) => {
     setRun(conversationId, runId);
 
     const now = performance.now();
-    for (const { paneId } of targets) {
+    for (const paneId of input.paneIds) {
       updatePane(conversationId, paneId, (pane) => ({
         ...pane,
-        live: { messageId: null, text: '', reasoning: '', startedAt: now, firstTokenAt: null, activity: [], sources: [] },
+        live: { messageId: null, text: '', reasoning: '', startedAt: now, firstTokenAt: null, activity: [], sources: [], approvals: [] },
       }));
     }
 
@@ -90,19 +128,12 @@ export const useChatStore = create<ChatState>((set, get) => {
     const flush = () => {
       frame = null;
       for (const [paneId, chunk] of pending) {
-        updatePane(conversationId, paneId, (pane) =>
-          pane.live
-            ? {
-                ...pane,
-                live: {
-                  ...pane.live,
-                  text: pane.live.text + chunk.text,
-                  reasoning: pane.live.reasoning + chunk.reasoning,
-                  firstTokenAt: pane.live.firstTokenAt ?? performance.now(),
-                },
-              }
-            : pane,
-        );
+        updateLive(conversationId, paneId, (live) => ({
+          ...live,
+          text: live.text + chunk.text,
+          reasoning: live.reasoning + chunk.reasoning,
+          firstTokenAt: live.firstTokenAt ?? performance.now(),
+        }));
       }
       pending.clear();
     };
@@ -124,12 +155,11 @@ export const useChatStore = create<ChatState>((set, get) => {
     const onEvent = (event: StreamEvent) => {
       switch (event.type) {
         case 'user':
-          updatePane(conversationId, event.paneId, (pane) => ({ ...pane, messages: [...pane.messages, event.message] }));
+        case 'truncate':
+          updatePane(conversationId, event.paneId, (pane) => ({ ...pane, messages: applyMessageEvent(pane.messages, event) }));
           break;
         case 'start':
-          updatePane(conversationId, event.paneId, (pane) =>
-            pane.live ? { ...pane, live: { ...pane.live, messageId: event.messageId } } : pane,
-          );
+          updateLive(conversationId, event.paneId, (live) => ({ ...live, messageId: event.messageId }));
           break;
         case 'delta':
           queue(event.paneId, 'text', event.text);
@@ -138,19 +168,19 @@ export const useChatStore = create<ChatState>((set, get) => {
           queue(event.paneId, 'reasoning', event.text);
           break;
         case 'activity':
-          updatePane(conversationId, event.paneId, (pane) => {
-            if (!pane.live) return pane;
-            const exists = pane.live.activity.some((item) => item.id === event.item.id);
-            const activity = exists
-              ? pane.live.activity.map((item) => (item.id === event.item.id ? event.item : item))
-              : [...pane.live.activity, event.item];
-            return { ...pane, live: { ...pane.live, activity } };
-          });
+          updateLive(conversationId, event.paneId, (live) => ({ ...live, activity: upsertActivity(live.activity, event.item) }));
           break;
         case 'source':
-          updatePane(conversationId, event.paneId, (pane) =>
-            pane.live ? { ...pane, live: { ...pane.live, sources: [...pane.live.sources, event.source] } } : pane,
-          );
+          updateLive(conversationId, event.paneId, (live) => ({ ...live, sources: [...live.sources, event.source] }));
+          break;
+        case 'approval':
+          updateLive(conversationId, event.paneId, (live) => ({ ...live, approvals: [...live.approvals, event.request] }));
+          break;
+        case 'approval_resolved':
+          updateLive(conversationId, event.paneId, (live) => ({
+            ...live,
+            approvals: live.approvals.filter((request) => request.id !== event.id),
+          }));
           break;
         case 'done':
           finish(event.paneId, event.message);
@@ -164,11 +194,11 @@ export const useChatStore = create<ChatState>((set, get) => {
     };
 
     try {
-      await streamChat({ runId, conversationId, content, targets }, onEvent, controller.signal);
+      await streamChat({ runId, conversationId, ...input }, onEvent, controller.signal);
     } catch (error) {
       if (!controller.signal.aborted) {
         const reason = error instanceof Error ? error.message : String(error);
-        for (const { paneId } of targets) {
+        for (const paneId of input.paneIds) {
           if (get().conversations[conversationId]?.panes[paneId]?.live) {
             finish(paneId, errorMessage(conversation, paneId, reason));
           }
@@ -177,13 +207,17 @@ export const useChatStore = create<ChatState>((set, get) => {
     } finally {
       if (frame !== null) cancelAnimationFrame(frame);
       flush();
-      for (const { paneId } of targets) {
+      for (const paneId of input.paneIds) {
         updatePane(conversationId, paneId, (pane) => (pane.live ? { ...pane, live: null } : pane));
       }
       controllers.delete(conversationId);
       setRun(conversationId, null);
       get().onRunFinished?.(conversationId);
     }
+  }
+
+  function busy(conversationId: string): boolean {
+    return Boolean(get().conversations[conversationId]?.runId);
   }
 
   return {
@@ -203,27 +237,53 @@ export const useChatStore = create<ChatState>((set, get) => {
       }));
     },
 
-    async send(conversation, content, paneIds) {
-      if (get().conversations[conversation.id]?.runId) return;
-      const panes = get().conversations[conversation.id]?.panes ?? {};
-      await run(
-        conversation,
+    async send(conversation, content, paneIds, attachments = []) {
+      if (busy(conversation.id)) return;
+      await run(conversation, {
+        action: 'send',
         content,
-        paneIds.map((paneId) => ({ paneId, history: historyOf(panes[paneId]?.messages ?? []) })),
-      );
+        paneIds,
+        ...(attachments.length ? { attachmentIds: attachments.map((attachment) => attachment.id) } : {}),
+      });
     },
 
     async regenerate(conversation, paneId) {
-      if (get().conversations[conversation.id]?.runId) return;
+      if (busy(conversation.id)) return;
       const messages = get().conversations[conversation.id]?.panes[paneId]?.messages ?? [];
       const lastUser = messages.findLastIndex((message) => message.role === 'user');
       if (lastUser === -1) return;
-      const removed = messages.slice(lastUser + 1);
       updatePane(conversation.id, paneId, (pane) => ({ ...pane, messages: messages.slice(0, lastUser + 1) }));
-      if (conversation.persist) {
-        await Promise.all(removed.map((message) => api<void>(`/messages/${message.id}`, { method: 'DELETE' })));
+      await run(conversation, { action: 'regenerate', content: null, paneIds: [paneId] });
+    },
+
+    async edit(conversation, paneId, messageId, content) {
+      if (busy(conversation.id)) return;
+      const messages = get().conversations[conversation.id]?.panes[paneId]?.messages ?? [];
+      const index = messages.findIndex((message) => message.id === messageId);
+      if (index === -1) return;
+      updatePane(conversation.id, paneId, (pane) => ({
+        ...pane,
+        messages: messages.slice(0, index + 1).map((message) => (message.id === messageId ? { ...message, content } : message)),
+      }));
+      await run(conversation, { action: 'edit', content, paneIds: [paneId], messageId });
+    },
+
+    approve(id, approved) {
+      void api('/chat/approve', { method: 'POST', json: { id, approved } });
+    },
+
+    async setPreferred(conversationId, message, preferred) {
+      const apply = (value: boolean | null) =>
+        updatePane(conversationId, message.paneId, (pane) => ({
+          ...pane,
+          messages: pane.messages.map((entry) => (entry.id === message.id ? { ...entry, preferred: value } : entry)),
+        }));
+      apply(preferred);
+      try {
+        await api(`/conversations/${conversationId}/messages/${message.id}`, { method: 'PATCH', json: { preferred } });
+      } catch {
+        apply(message.preferred);
       }
-      await run(conversation, null, [{ paneId, history: historyOf(messages.slice(0, lastUser + 1)) }]);
     },
 
     stop(conversationId, paneId) {
@@ -240,7 +300,7 @@ export const useChatStore = create<ChatState>((set, get) => {
     },
 
     async clearPane(conversation, paneId) {
-      if (conversation.persist) await api(`/panes/${paneId}/messages`, { method: 'DELETE' });
+      await api(`/panes/${paneId}/messages`, { method: 'DELETE' });
       updatePane(conversation.id, paneId, () => ({ messages: [], live: null }));
     },
 
@@ -273,6 +333,8 @@ function errorMessage(conversation: ConversationDetail, paneId: string, error: s
     finishReason: null,
     error,
     activity: null,
+    attachments: null,
+    preferred: null,
     createdAt: new Date().toISOString(),
   };
 }

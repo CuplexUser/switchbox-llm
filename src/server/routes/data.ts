@@ -1,27 +1,40 @@
 import { Hono } from 'hono';
 import type { Repo } from 'repolayer';
-import type { ExportBundle } from '../../shared/types.ts';
+import type { AppSettings, ExportBundle } from '../../shared/types.ts';
 import { badRequest, readJson, type Services } from '../context.ts';
 import { reviveDates, serialize } from '../services/serialize.ts';
 
 const DATE_FIELDS = ['createdAt', 'updatedAt'];
 
-export function dataRoutes({ repos, settings, usage }: Services): Hono {
+/** Fields added after the first export format, filled in for older bundles. */
+const LATER_FIELDS: Record<string, Record<string, unknown>> = {
+  conversations: { toolGroups: null },
+  messages: { attachments: null, trace: null, preferred: null },
+  systemPrompts: { tools: null, maxToolRounds: null, params: null },
+  memories: { scope: null },
+};
+
+export function dataRoutes({ repos, settings, usage, store }: Services): Hono {
   const app = new Hono();
 
   app.get('/data/export', async (c) => {
+    const conversations = await repos.conversations.findMany({ where: { persist: true } });
+    const persisted = new Set(conversations.map((conversation) => conversation.id));
+    const files = await repos.attachments.findMany();
     const bundle: ExportBundle = serialize({
       version: 1,
       exportedAt: new Date().toISOString(),
-      conversations: await repos.conversations.findMany({ where: { persist: true } }),
-      panes: await repos.panes.findMany(),
+      conversations,
+      panes: (await repos.panes.findMany()).filter((pane) => persisted.has(pane.conversationId)),
+      // Rows go out as stored, including tool traces, so an import can replay them.
       messages: await repos.messages.findMany({ orderBy: [{ field: 'createdAt', direction: 'asc' }] }),
       systemPrompts: await repos.systemPrompts.findMany(),
       memories: await repos.memories.findMany(),
+      attachments: files
+        .filter((file) => file.conversationId !== null && persisted.has(file.conversationId))
+        .map(({ data, ...file }) => ({ ...file, data: Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString('base64') })),
       settings: await settings.getAll(),
     });
-    const persisted = new Set(bundle.conversations.map((conversation) => conversation.id));
-    bundle.panes = bundle.panes.filter((pane) => persisted.has(pane.conversationId));
     c.header('Content-Disposition', `attachment; filename="switchbox-export-${bundle.exportedAt.slice(0, 10)}.json"`);
     return c.json(bundle);
   });
@@ -31,10 +44,15 @@ export function dataRoutes({ repos, settings, usage }: Services): Hono {
     const bundle = await readJson<Partial<ExportBundle>>(c);
     if (bundle.version !== 1) throw badRequest('Not a Switchbox export (expected version 1)');
 
-    async function insert<T extends { id: string }>(repo: Repo<T>, rows: object[] | undefined): Promise<number> {
+    async function insert<T extends { id: string }>(
+      repo: Repo<T>,
+      rows: object[] | undefined,
+      table: string,
+      convert: (row: Record<string, unknown>) => Record<string, unknown> = (row) => row,
+    ): Promise<number> {
       let count = 0;
       for (const row of rows ?? []) {
-        const record = reviveDates(row as Record<string, unknown>, DATE_FIELDS) as unknown as T;
+        const record = convert(reviveDates({ ...LATER_FIELDS[table], ...(row as Record<string, unknown>) }, DATE_FIELDS)) as unknown as T;
         if (typeof record.id !== 'string' || (await repo.findById(record.id))) continue;
         await repo.create(record);
         count++;
@@ -43,24 +61,40 @@ export function dataRoutes({ repos, settings, usage }: Services): Hono {
     }
 
     const imported = {
-      conversations: await insert(repos.conversations, bundle.conversations),
-      panes: await insert(repos.panes, bundle.panes),
-      messages: await insert(repos.messages, bundle.messages),
-      systemPrompts: await insert(repos.systemPrompts, bundle.systemPrompts),
-      memories: await insert(repos.memories, bundle.memories),
+      conversations: await insert(repos.conversations, bundle.conversations, 'conversations'),
+      panes: await insert(repos.panes, bundle.panes, 'panes'),
+      messages: await insert(repos.messages, bundle.messages, 'messages'),
+      systemPrompts: await insert(repos.systemPrompts, bundle.systemPrompts, 'systemPrompts'),
+      memories: await insert(repos.memories, bundle.memories, 'memories'),
+      attachments: await insert(repos.attachments, bundle.attachments, 'attachments', (row) => ({
+        ...row,
+        data: Buffer.from(String(row.data ?? ''), 'base64'),
+      })),
     };
     if (imported.messages > 0) await usage.backfill();
-    if (bundle.settings) await settings.replaceAll(bundle.settings);
+    if (bundle.settings) {
+      const incoming: Partial<AppSettings> = { ...bundle.settings };
+      // MCP servers run commands on this machine, so imported ones start switched off.
+      if (incoming.mcp) {
+        const existing = (await settings.get('mcp')).servers;
+        const known = new Set(existing.map((server) => server.id));
+        const added = (incoming.mcp.servers ?? []).filter((server) => !known.has(server.id)).map((server) => ({ ...server, enabled: false }));
+        incoming.mcp = { servers: [...existing, ...added] };
+      }
+      await settings.replaceAll(incoming);
+    }
     return c.json({ imported });
   });
 
   // Usage rows are left alone, so totals still count the deleted chats.
   app.delete('/data/history', async (c) => {
+    const conversations = await repos.conversations.findMany();
+    for (const conversation of conversations) await store.deleteConversation(conversation.id);
     const removed = await repos.conversations.withTransaction(async (tx, ctx) => {
-      await repos.messages.with(ctx).deleteMany();
       await repos.panes.with(ctx).deleteMany();
       return tx.deleteMany();
     });
+    await repos.attachments.deleteMany();
     return c.json({ removed });
   });
 

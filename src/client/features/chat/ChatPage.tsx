@@ -18,7 +18,6 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Link as RouterLink, useParams } from 'react-router';
 import { MAX_PANES } from '../../../shared/defaults.ts';
 import type { ConversationDetail } from '../../../shared/types.ts';
-import { api } from '../../api/client.ts';
 import {
   useAddPane,
   useConversation,
@@ -28,10 +27,11 @@ import {
 } from '../../api/hooks.ts';
 import { ModelPicker } from '../../components/ModelPicker.tsx';
 import { shortModel } from '../../lib/format.ts';
-import { allMessages, useChatStore } from '../../stores/chat.ts';
+import { useChatStore } from '../../stores/chat.ts';
 import { channelSoftVar, channelVar } from '../../theme/theme.ts';
 import { Composer } from './Composer.tsx';
 import { Pane } from './Pane.tsx';
+import { ToolsMenu } from './ToolsMenu.tsx';
 
 function ToggleChip({
   on,
@@ -167,20 +167,8 @@ function ChatView({ conversationId }: { conversationId: string }) {
   }
 
   function togglePersist(detail: ConversationDetail): void {
-    const persist = !detail.persist;
-    updateConversation.mutate(
-      { id: detail.id, persist },
-      {
-        onSuccess: () => {
-          if (!persist) return;
-          // Save what was said while the chat was temporary.
-          const unsaved = allMessages(useChatStore.getState().conversations[detail.id]);
-          if (unsaved.length > 0) {
-            void api(`/conversations/${detail.id}/messages`, { method: 'POST', json: { messages: unsaved } });
-          }
-        },
-      },
-    );
+    // The server writes what was said so far when a temporary chat is saved.
+    updateConversation.mutate({ id: detail.id, persist: !detail.persist });
   }
 
   const noTargets = targets.length === 0;
@@ -236,6 +224,7 @@ function ChatView({ conversationId }: { conversationId: string }) {
               : 'Models answer without web access. Click to turn on.'
           }
         />
+        <ToolsMenu conversation={data} compact={narrow} />
         <Tooltip title={panes.length >= MAX_PANES ? `Up to ${MAX_PANES} models per chat` : 'Add a model to compare'}>
           <span>
             <Button
@@ -306,7 +295,7 @@ function ChatView({ conversationId }: { conversationId: string }) {
             disabled={noTargets}
             disabledReason="Pick at least one pane to send to"
             placeholder={panes.length > 1 ? `Message ${targets.length} of ${panes.length} models` : 'Message'}
-            onSend={(text) => void send(data, text, targets.map((pane) => pane.id))}
+            onSend={(text, attachments) => void send(data, text, targets.map((pane) => pane.id), attachments)}
             onStop={() => stop(data.id)}
             footer={
               panes.length > 1 &&

@@ -9,12 +9,16 @@ in parallel.
   single composer can target all panes or only some
 - **History:** messages are saved to SQLite through [repolayer](https://www.npmjs.com/package/repolayer). A
   chat can also be temporary, in which case nothing is written
-- **System prompts:** a reusable library with a default, plus custom instructions for each pane. Two
-  starter prompts ("General assistant" and "Research analyst") are added on first run
+- **Profiles:** reusable system prompts that can also limit tools and set their own tool round limit and
+  generation settings, plus custom instructions for each pane. Two starter prompts ("General assistant" and
+  "Research analyst") are added on first run
 - **Web search:** models can search the web and read pages, with Tavily, Brave, or the provider's own search.
   Each reply shows what was searched and which sources were used
-- **Memory:** facts about you that are added to the system prompt. Models can save and forget facts when you
-  ask them to, and a model you choose can suggest new ones for you to keep or dismiss
+- **Tools:** besides the web, a JavaScript sandbox, the current time, search across earlier chats, memory, and
+  any tools from MCP servers you add. Each tool can run automatically, ask you first, or be off
+- **Attachments:** images, PDFs and text files can be attached to a message
+- **Memory:** facts about you that are added to the system prompt. Models can save, update and forget facts
+  when you ask them to, and a model you choose can suggest new ones for you to keep or dismiss
 - **Stats:** time to first token, tokens per second, token counts, and cost where the provider reports it
 - **Usage:** a page with token usage, cost and speed per model over time, so you don't need each provider's
   dashboard
@@ -44,6 +48,8 @@ API keys go in `.env` and stay on the local server:
 | `BRAVE_API_KEY` | Web search through Brave Search |
 | `PORT` | API port, default `8787` |
 | `DATABASE_FILE` | SQLite file, default `./data/switchbox.db` |
+| `LOG_LEVEL` | `debug`, `info` (default), `warn` or `error` |
+| `LOG_FORMAT` | `json` for one JSON object per line instead of text |
 
 Everything else is configured on the Settings page and stored in the database: enabled providers, base URLs
 for local servers, generation defaults, prompts, memory options, theme, and so on. Restart the server
@@ -67,23 +73,69 @@ Choose how search runs under Settings → Web search. Each chat has its own Web 
 Separately, a `web_fetch` tool lets models read a page by URL; you can turn it off in the same settings tab. It
 refuses localhost and private-network addresses, including redirects and hostnames that resolve to them.
 
-With Tavily or Brave, the server runs a tool loop: the model calls a tool, the server runs it and sends back the
-result, and this repeats up to the "Tool rounds per reply" limit. After that, the model is asked to answer with
-what it has. Models that reject tool definitions, which is common with local models, automatically get a retry
-without tools.
+With Tavily or Brave, `web_search` is a tool like `web_fetch`, and both follow the tool loop described next.
+
+## Tools
+
+Models call tools, the server runs them and sends back the results, and this repeats up to the "Tool rounds per
+reply" limit under Settings → Tools. After that, the model is asked to answer with what it has.
+
+| Tool | Group | What it does |
+| --- | --- | --- |
+| `web_search`, `web_fetch` | Web | See [Web search](#web-search). Follows each chat's Web toggle |
+| `memory_save`, `memory_update`, `memory_forget`, `memory_list` | Memory | See [Memory](#memory). Follows each chat's Memory toggle |
+| `run_js` | Run JavaScript | Runs JavaScript for arithmetic, dates and data processing, and returns console output and the last value |
+| `current_time` | Current time | The date and time in any time zone |
+| `conversation_search` | Search earlier chats | Finds messages in other saved chats that contain all the given words |
+| `read_attachment` | Read attached files | Reads the rest of a long text file attached to the chat |
+| `mcp_<server>_<tool>` | One per MCP server | Tools from the MCP servers you add |
+
+- **Chat toggles:** the Tools menu in a chat's header turns optional groups on or off for that chat. Web and
+  memory keep their own toggles
+- **Policies:** each tool is **Auto** (runs without asking), **Ask** (the reply pauses and shows the call's
+  arguments until you allow or decline it) or **Off** (not offered). MCP tools default to Ask, the others to
+  Auto. A declined call tells the model you declined, and stopping a reply declines anything still waiting
+- **Profiles:** a profile can limit its panes to some tool groups and set its own round limit
+- **Parallel calls:** calls from one round run a few at a time, set by "Tool calls at once"
+- **Later messages:** follow-up questions see earlier tool calls and their results, shortened by default, so a
+  model can refer to a page it read without fetching it again. Settings → Tools can keep them in full or leave
+  them out. The history is built on the server from saved messages; temporary chats keep theirs in memory
+- **Context window:** when a request gets close to the model's context window, long tool results are shortened
+  first, then the earliest exchanges are left out, and the reply says so
+- **Outside content:** results from web pages and MCP servers are wrapped in `<tool_output>` tags, and the
+  system prompt tells the model to treat them as information, not instructions
+- **Models without tools:** local models often reject tool definitions. They get a retry without tools, and for
+  the next hour that model is sent requests without tools
+
+The `run_js` sandbox runs in a worker thread with a memory cap and a 5 second limit, inside a V8 context with no
+Node globals (no `require`, `process`, network or file access) where compiling code from strings is disabled.
+
+### MCP servers
+
+Add servers under Settings → Tools → MCP servers, either as a command Switchbox starts (stdio) or as a
+Streamable HTTP URL with optional headers. "Test connection" lists a server's tools before you save it. Servers
+connect the first time their tools are needed and stay connected. A server that fails to start is tried again
+after a minute, and the error shows in Settings and in the chat's Tools menu.
+
+Stdio servers run with your user account, so only add servers you trust. Servers in an imported export start
+switched off.
 
 ## Memory
 
 Memories are facts about you, listed on the Memory page. In chats with memory turned on, the active ones are
-added to the system prompt, and models get two tools:
+added to the system prompt, up to "Most memories per prompt". When there are more, the ones that share the most
+words with your message are sent. Models get these tools:
 
 | Tool | What it does |
 | --- | --- |
 | `memory_save` | Saves a fact, e.g. when you say "remember that I use metric units". It is active right away and marked "Saved by a model" |
-| `memory_forget` | Removes the memory that matches the text it's given. When several match, nothing is removed and the model gets the candidates back |
+| `memory_update` | Rewrites a fact that changed, e.g. after you move |
+| `memory_forget` | Moves the matching memory to Forgotten on the Memory page, where you can restore it. When several match, nothing changes and the model gets the candidates back |
+| `memory_list` | Lists everything in memory, including facts left out of the prompt |
 
-Saving a fact that already exists does nothing, or turns it back on if it was paused or dismissed. The system
-prompt tells the model it has long-term memory, so it uses these tools instead of saying it can't remember.
+Saving a fact that already exists does nothing, or turns it back on if it was paused, dismissed or forgotten.
+The system prompt tells the model it has long-term memory, so it uses these tools instead of saying it can't
+remember.
 
 Under Settings → Memory you can also have a model read each exchange and suggest facts. Those wait in
 Suggestions until you keep or dismiss them.
@@ -141,26 +193,39 @@ The server binds to `127.0.0.1` only. It also refuses API requests that aren't a
 src/
   shared/    Types, defaults and the SSE parser used by both sides
   server/    Hono API
-    db/         repolayer schemas and repos (one table per repo)
-    providers/  OpenAI-compatible and Anthropic streaming adapters (tool calls, native search)
-    web/        Tavily and Brave search, safe page fetching, tool definitions
-    services/   chat runs, prompt assembly, memory tools and suggestions, usage reports, settings
+    db/         repolayer schemas and repos (one table per repo), column additions, versioned migrations
+    providers/  OpenAI-compatible and Anthropic streaming adapters (tool calls, native search, attachments,
+                reasoning settings, prompt caching, retries)
+    tools/      tool registry, argument checks, approval policies, built-in tools and MCP servers
+    web/        Tavily and Brave search, safe page fetching
+    services/   chat runs and the tool loop, message storage and history, attachments, memory, search,
+                usage reports, settings
     routes/     REST endpoints and the /api/chat/stream SSE endpoint
   client/    React 19, MUI 9, TanStack Query, Zustand
     features/   chat, memory, settings, usage
     stores/     live streaming state per pane
 ```
 
-A send is one `POST /api/chat/stream`. The server streams every target pane concurrently and tags each SSE
-event with its pane id. Every pane has its own abort controller, so `POST /api/chat/stop` can stop one pane
-and leave the others running. Stopped replies keep their partial text.
+A send is one `POST /api/chat/stream` with the pane ids and the new message, and the server builds each pane's
+history from its stored messages. It streams every target pane concurrently and tags each SSE event with its
+pane id. Every pane has its own abort controller, so `POST /api/chat/stop` can stop one pane and leave the
+others running. Stopped replies keep their partial text. A tool call waiting for approval is answered with
+`POST /api/chat/approve`.
+
+Each saved reply keeps its tool loop in the `messages.trace` column: the model's calls, provider blocks such as
+thinking signatures, and tool results cut to 20,000 characters each. It is used to build later history and is
+never sent to the browser.
 
 Tables are created on startup with repolayer's `ensureTable()`, and `verifyTable()` checks them against the
-schemas. repolayer doesn't do migrations. Instead, `src/server/db/migrate.ts` adds any column a newer schema
-declares to an existing database, using repolayer's own column DDL. Any other schema change needs a manual
-migration.
+schemas. repolayer doesn't do migrations, so there are two steps of our own. `src/server/db/migrate.ts` adds
+any column a newer schema declares to an existing database, using repolayer's own column DDL. Changes to data
+that already exists go in `src/server/db/migrations.ts` as numbered steps; each runs once, and the version
+reached is stored in the settings table.
 
-Settings → Data exports and imports everything except API keys as JSON.
+Server logs have one line per event, with fields such as the run and pane id, so a reply can be followed from
+start to finish.
+
+Settings → Data exports and imports everything except API keys as JSON, including attachments and tool traces.
 
 ## Roadmap
 

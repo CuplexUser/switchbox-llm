@@ -2,20 +2,23 @@ import CheckRoundedIcon from '@mui/icons-material/CheckRounded';
 import ContentCopyRoundedIcon from '@mui/icons-material/ContentCopyRounded';
 import ExpandMoreRoundedIcon from '@mui/icons-material/ExpandMoreRounded';
 import ReplayRoundedIcon from '@mui/icons-material/ReplayRounded';
+import BuildOutlinedIcon from '@mui/icons-material/BuildOutlined';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
 import ButtonBase from '@mui/material/ButtonBase';
 import Collapse from '@mui/material/Collapse';
 import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { memo, useState } from 'react';
-import type { Message } from '../../../shared/types.ts';
+import type { ApprovalRequest, Message } from '../../../shared/types.ts';
 import { Markdown } from '../../components/Markdown.tsx';
 import { formatCost, formatMs, formatTokens, shortModel, tokensPerSecond } from '../../lib/format.ts';
-import type { LiveReply } from '../../stores/chat.ts';
+import { useChatStore, type LiveReply } from '../../stores/chat.ts';
 import { fonts } from '../../theme/theme.ts';
-import { WebActivity } from './WebActivity.tsx';
+import { ActivityLog } from './ActivityLog.tsx';
+import { AttachmentChips } from './AttachmentChips.tsx';
 
 const FINISH_NOTES: Record<string, string> = {
   aborted: 'Stopped',
@@ -26,23 +29,77 @@ const FINISH_NOTES: Record<string, string> = {
 };
 
 export function UserMessage({ message }: { message: Message }) {
+  const files = (message.attachments ?? []).map((ref) => ({ key: ref.id, id: ref.id, name: ref.name, size: ref.size, kind: ref.kind }));
+  return (
+    <Box sx={{ alignSelf: 'flex-end', maxWidth: '88%', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 0.75 }}>
+      {files.length > 0 && <AttachmentChips items={files} />}
+      {message.content && (
+        <Box
+          sx={{
+            px: 1.75,
+            py: 1.125,
+            borderRadius: '12px 12px 4px 12px',
+            backgroundColor: 'var(--sb-sunken)',
+            border: '1px solid var(--sb-border)',
+            whiteSpace: 'pre-wrap',
+            overflowWrap: 'anywhere',
+            fontSize: '0.875rem',
+            lineHeight: 1.55,
+          }}
+        >
+          {message.content}
+        </Box>
+      )}
+    </Box>
+  );
+}
+
+/** A tool call waiting for the user, with its arguments. */
+function ApprovalCard({ request }: { request: ApprovalRequest }) {
+  const approve = useChatStore((state) => state.approve);
+  const [answered, setAnswered] = useState(false);
+  const answer = (approved: boolean) => {
+    setAnswered(true);
+    approve(request.id, approved);
+  };
   return (
     <Box
-      sx={{
-        alignSelf: 'flex-end',
-        maxWidth: '88%',
-        px: 1.75,
-        py: 1.125,
-        borderRadius: '12px 12px 4px 12px',
-        backgroundColor: 'var(--sb-sunken)',
-        border: '1px solid var(--sb-border)',
-        whiteSpace: 'pre-wrap',
-        overflowWrap: 'anywhere',
-        fontSize: '0.875rem',
-        lineHeight: 1.55,
-      }}
+      role="group"
+      aria-label={`Approve ${request.label}`}
+      sx={{ my: 1.25, p: 1.5, borderRadius: '10px', border: '1px solid var(--sb-pane-color, var(--sb-ink))', backgroundColor: 'var(--sb-surface)' }}
     >
-      {message.content}
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 0.75 }}>
+        <BuildOutlinedIcon sx={{ fontSize: 16, color: 'var(--sb-text-muted)' }} />
+        <Typography variant="body2" sx={{ fontWeight: 600 }}>
+          Allow {request.label}?
+        </Typography>
+      </Box>
+      <Box
+        component="pre"
+        sx={{
+          m: 0,
+          mb: 1.25,
+          p: 1,
+          maxHeight: 200,
+          overflow: 'auto',
+          borderRadius: '6px',
+          backgroundColor: 'var(--sb-sunken)',
+          fontFamily: fonts.mono,
+          fontSize: '0.75rem',
+          whiteSpace: 'pre-wrap',
+          overflowWrap: 'anywhere',
+        }}
+      >
+        {request.arguments}
+      </Box>
+      <Box sx={{ display: 'flex', gap: 1 }}>
+        <Button size="small" variant="contained" disabled={answered} onClick={() => answer(true)}>
+          Allow
+        </Button>
+        <Button size="small" variant="outlined" color="inherit" disabled={answered} onClick={() => answer(false)}>
+          Decline
+        </Button>
+      </Box>
     </Box>
   );
 }
@@ -134,7 +191,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   return (
     <Box sx={{ '&:hover .sb-actions, &:focus-within .sb-actions': { opacity: 1 } }}>
       {message.reasoning && <Reasoning text={message.reasoning} />}
-      {message.activity && <WebActivity items={message.activity.items} sources={message.activity.sources} />}
+      {message.activity && <ActivityLog items={message.activity.items} sources={message.activity.sources} />}
       {message.content && <Markdown text={message.content} />}
       {message.error && (
         <Alert severity="error" variant="outlined" sx={{ mt: message.content ? 1.5 : 0, fontSize: '0.8125rem' }}>
@@ -181,11 +238,14 @@ export const AssistantMessage = memo(function AssistantMessage({
 });
 
 export function LiveMessage({ live }: { live: LiveReply }) {
-  const waiting = !live.text && !live.reasoning && live.activity.length === 0;
+  const waiting = !live.text && !live.reasoning && live.activity.length === 0 && live.approvals.length === 0;
   return (
     <Box aria-live="polite" aria-busy="true">
       {live.reasoning && <Reasoning text={live.reasoning} live={!live.text} />}
-      <WebActivity items={live.activity} sources={live.sources} live />
+      <ActivityLog items={live.activity} sources={live.sources} live />
+      {live.approvals.map((request) => (
+        <ApprovalCard key={request.id} request={request} />
+      ))}
       {waiting ? (
         <Box sx={{ display: 'flex', gap: 0.75, py: 1 }} aria-label="Waiting for the first token">
           {[0, 1, 2].map((index) => (

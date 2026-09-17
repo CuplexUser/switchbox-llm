@@ -35,7 +35,7 @@ export function MemoryTab() {
         </SettingRow>
         <SettingRow
           label="Most memories per prompt"
-          description="The most recently updated memories are sent first. Set to 0 to send none."
+          description="When there are more, the ones most related to your message are sent. Set to 0 to send none."
           htmlFor="max-injected"
         >
           <TextField

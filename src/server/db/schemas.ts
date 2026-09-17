@@ -13,6 +13,9 @@ export const systemPromptSchema = defineSchema({
   name: { type: 'string' },
   content: { type: 'string' },
   isDefault: { type: 'boolean', column: 'is_default' },
+  tools: { type: 'json', nullable: true },
+  maxToolRounds: { type: 'integer', nullable: true, column: 'max_tool_rounds' },
+  params: { type: 'json', nullable: true },
   createdAt: { type: 'date', column: 'created_at' },
   updatedAt: { type: 'date', column: 'updated_at' },
 });
@@ -23,6 +26,7 @@ export const conversationSchema = defineSchema({
   persist: { type: 'boolean' },
   useMemory: { type: 'boolean', column: 'use_memory' },
   webAccess: { type: 'boolean', column: 'web_access' },
+  toolGroups: { type: 'json', nullable: true, column: 'tool_groups' },
   pinned: { type: 'boolean' },
   archived: { type: 'boolean' },
   createdAt: { type: 'date', column: 'created_at' },
@@ -59,6 +63,10 @@ export const messageSchema = defineSchema({
   finishReason: { type: 'string', nullable: true, column: 'finish_reason' },
   error: { type: 'string', nullable: true },
   activity: { type: 'json', nullable: true },
+  attachments: { type: 'json', nullable: true },
+  /** The reply's tool loop as provider-neutral messages, replayed into later turns. Never sent to the client. */
+  trace: { type: 'json', nullable: true },
+  preferred: { type: 'boolean', nullable: true },
   createdAt: { type: 'date', column: 'created_at' },
 });
 
@@ -69,6 +77,7 @@ export const memorySchema = defineSchema({
   enabled: { type: 'boolean' },
   source: { type: 'string' },
   status: { type: 'string' },
+  scope: { type: 'string', nullable: true },
   sourceConversationId: { type: 'string', nullable: true, column: 'source_conversation_id' },
   createdAt: { type: 'date', column: 'created_at' },
   updatedAt: { type: 'date', column: 'updated_at' },
@@ -80,6 +89,32 @@ export type ConversationRow = Infer<typeof conversationSchema>;
 export type PaneRow = Infer<typeof paneSchema>;
 export type MessageRow = Infer<typeof messageSchema>;
 export type MemoryRow = Infer<typeof memorySchema>;
+
+export const memoryHistorySchema = defineSchema({
+  id: { type: 'string', primaryKey: true },
+  memoryId: { type: 'string', column: 'memory_id' },
+  action: { type: 'string' },
+  actor: { type: 'string' },
+  content: { type: 'string' },
+  previousContent: { type: 'string', nullable: true, column: 'previous_content' },
+  createdAt: { type: 'date', column: 'created_at' },
+});
+
+export type MemoryHistoryRow = Infer<typeof memoryHistorySchema>;
+
+/** Uploaded files. The bytes live in the database so deleting a chat, exporting and importing all include them. */
+export const attachmentSchema = defineSchema({
+  id: { type: 'string', primaryKey: true },
+  conversationId: { type: 'string', nullable: true, column: 'conversation_id' },
+  name: { type: 'string' },
+  mimeType: { type: 'string', column: 'mime_type' },
+  size: { type: 'integer' },
+  kind: { type: 'string' },
+  data: { type: 'binary' },
+  createdAt: { type: 'date', column: 'created_at' },
+});
+
+export type AttachmentRow = Infer<typeof attachmentSchema>;
 
 /** One row per assistant reply, kept when its chat is deleted so usage totals stay complete. The id is the message id. */
 export const usageRecordSchema = defineSchema({

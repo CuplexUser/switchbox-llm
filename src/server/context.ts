@@ -2,16 +2,28 @@ import { HTTPException } from 'hono/http-exception';
 import type { Context } from 'hono';
 import type { Repos } from './db/repos.ts';
 import type { ProviderRegistry } from './providers/registry.ts';
+import type { ApprovalBroker } from './services/approvals.ts';
+import type { AttachmentService } from './services/attachments.ts';
 import type { ChatService } from './services/chat.ts';
 import type { MemoryService } from './services/memory.ts';
+import type { MessageStore } from './services/messages.ts';
+import type { SearchService } from './services/search.ts';
 import type { SettingsService } from './services/settings.ts';
 import type { UsageService } from './services/usage.ts';
+import type { McpManager } from './tools/mcp.ts';
+import type { ToolRegistry } from './tools/registry.ts';
 
 export interface Services {
   repos: Repos;
   settings: SettingsService;
   registry: ProviderRegistry;
   memory: MemoryService;
+  store: MessageStore;
+  attachments: AttachmentService;
+  search: SearchService;
+  tools: ToolRegistry;
+  mcp: McpManager;
+  approvals: ApprovalBroker;
   chat: ChatService;
   usage: UsageService;
 }

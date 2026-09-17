@@ -9,6 +9,7 @@ import { GeneralTab } from './GeneralTab.tsx';
 import { GenerationTab } from './GenerationTab.tsx';
 import { MemoryTab } from './MemoryTab.tsx';
 import { PromptsTab } from './PromptsTab.tsx';
+import { ToolsTab } from './ToolsTab.tsx';
 import { ProvidersTab } from './ProvidersTab.tsx';
 import { WebTab } from './WebTab.tsx';
 
@@ -16,8 +17,9 @@ const TABS = [
   { id: 'general', label: 'General', element: <GeneralTab /> },
   { id: 'providers', label: 'Providers', element: <ProvidersTab /> },
   { id: 'web', label: 'Web search', element: <WebTab /> },
+  { id: 'tools', label: 'Tools', element: <ToolsTab /> },
   { id: 'generation', label: 'Generation', element: <GenerationTab /> },
-  { id: 'prompts', label: 'System prompts', element: <PromptsTab /> },
+  { id: 'prompts', label: 'Profiles', element: <PromptsTab /> },
   { id: 'memory', label: 'Memory', element: <MemoryTab /> },
   { id: 'data', label: 'Data', element: <DataTab /> },
 ] as const;

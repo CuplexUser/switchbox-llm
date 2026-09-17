@@ -1,13 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { DEFAULT_GENERATION } from '../../shared/defaults.ts';
 import {
   AnthropicProvider,
   AnthropicTurn,
+  generationFields,
+  nearestEffort,
   toAnthropicMessages,
   webSearchToolFor,
   type AnthropicEvent,
 } from './anthropic.ts';
-import { mapModels, mapOpenAiChunk, OpenAiCompatibleProvider, toOpenAiMessages } from './openaiCompatible.ts';
-import type { ChatEvent, ChatRequest } from './types.ts';
+import { mapModels, mapOpenAiChunk, OpenAiCompatibleProvider, reasoningFields, toOpenAiMessages } from './openaiCompatible.ts';
+import { providerFetch, retryDelay, type ChatEvent, type ChatRequest, type LoopMessage } from './types.ts';
 
 function sseResponse(frames: string[]): Response {
   const encoder = new TextEncoder();
@@ -29,7 +32,7 @@ function request(overrides: Partial<ChatRequest> = {}): ChatRequest {
     model: 'test-model',
     system: 'Be brief.',
     messages: [{ role: 'user', content: 'Hi' }],
-    params: { temperature: 0.5, topP: 0.9, maxTokens: 100 },
+    params: { ...DEFAULT_GENERATION, temperature: 0.5, topP: 0.9, maxTokens: 100 },
     signal: new AbortController().signal,
     ...overrides,
   };
@@ -238,7 +241,7 @@ describe('Anthropic provider', () => {
     expect(webSearchToolFor('claude-haiku-4-5').type).toBe('web_search_20250305');
   });
 
-  it('sends system separately, one sampling param, tools, and emits the raw turn', async () => {
+  it('sends a cached system prompt, adaptive thinking without sampling, tools, and emits the raw turn', async () => {
     const fetchMock = vi.fn<typeof fetch>(async () =>
       sseResponse([
         `event: message_start\n${frame({ type: 'message_start', message: { usage: { input_tokens: 5 } } })}`,
@@ -257,13 +260,120 @@ describe('Anthropic provider', () => {
     expect(events.at(-1)).toEqual({ type: 'assistant_raw', content: [{ type: 'text', text: 'Yo' }] });
 
     const body = sentBody(fetchMock);
-    expect(body.system).toBe('Be brief.');
-    expect(body.temperature).toBe(0.5);
+    expect(body.system).toEqual([{ type: 'text', text: 'Be brief.', cache_control: { type: 'ephemeral' } }]);
+    expect(body.cache_control).toEqual({ type: 'ephemeral' });
+    expect(body.thinking).toEqual({ type: 'adaptive', display: 'summarized' });
+    expect(body.temperature).toBeUndefined();
     expect(body.top_p).toBeUndefined();
     expect(body.max_tokens).toBe(100);
     expect(body.tools).toEqual([
       { name: 'web_fetch', description: 'fetch', input_schema: { type: 'object' } },
       { type: 'web_search_20260209', name: 'web_search', max_uses: 8 },
     ]);
+  });
+});
+
+function params(overrides = {}) {
+  return { ...DEFAULT_GENERATION, ...overrides };
+}
+
+describe('reasoning and sampling settings', () => {
+  it('follows each Claude model family', () => {
+    expect(generationFields('claude-opus-5', params({ temperature: 0.7, reasoningEffort: 'xhigh' }))).toEqual({
+      output_config: { effort: 'xhigh' },
+      thinking: { type: 'adaptive', display: 'summarized' },
+      max_tokens: 32_000,
+    });
+    // Opus 4.6 thinks only when asked, keeps sampling otherwise, and has no xhigh.
+    expect(generationFields('claude-opus-4-6', params({ temperature: 0.7 }))).toEqual({ max_tokens: 8192, temperature: 0.7 });
+    expect(generationFields('claude-opus-4-6', params({ reasoningEffort: 'xhigh' }))).toMatchObject({
+      output_config: { effort: 'high' },
+      thinking: { type: 'adaptive' },
+    });
+    // Older models take a budget, which has to fit inside max_tokens.
+    expect(generationFields('claude-haiku-4-5', params({ thinkingBudget: 4000, maxTokens: 2000, temperature: 1 }))).toEqual({
+      thinking: { type: 'enabled', budget_tokens: 4000 },
+      max_tokens: 12_192,
+    });
+    expect(generationFields('claude-haiku-4-5', params({ topP: 0.5, reasoningEffort: 'high' }))).toEqual({ max_tokens: 8192, top_p: 0.5 });
+    expect(nearestEffort('max', ['low', 'medium', 'high'])).toBe('high');
+    expect(nearestEffort('low', [])).toBeNull();
+  });
+
+  it('uses each OpenAI-compatible dialect', () => {
+    expect(reasoningFields('openai', params({ reasoningEffort: 'max' }))).toEqual({ reasoning_effort: 'high' });
+    expect(reasoningFields('openrouter', params({ reasoningEffort: 'low' }))).toEqual({ reasoning: { effort: 'low' } });
+    expect(reasoningFields('openrouter', params({ thinkingBudget: 2048 }))).toEqual({ reasoning: { max_tokens: 2048 } });
+    expect(reasoningFields('ollama', params())).toEqual({});
+  });
+});
+
+describe('attachments in provider formats', () => {
+  const withFiles: LoopMessage[] = [
+    {
+      role: 'user',
+      content: 'Look',
+      attachments: [
+        { id: 'i', name: 'cat.png', mimeType: 'image/png', kind: 'image', data: 'AAA' },
+        { id: 'd', name: 'spec.pdf', mimeType: 'application/pdf', kind: 'pdf', data: 'BBB' },
+        { id: 't', name: 'notes.md', mimeType: 'text/plain', kind: 'text', text: '# hi' },
+      ],
+    },
+  ];
+
+  it('builds Anthropic content blocks with media first', () => {
+    expect(toAnthropicMessages(withFiles)).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAA' } },
+          { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: 'BBB' }, title: 'spec.pdf' },
+          { type: 'text', text: '<attachment name="notes.md" id="t">\n# hi\n</attachment>' },
+          { type: 'text', text: 'Look' },
+        ],
+      },
+    ]);
+  });
+
+  it('builds OpenAI content parts', () => {
+    expect(toOpenAiMessages('', withFiles)).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'image_url', image_url: { url: 'data:image/png;base64,AAA' } },
+          { type: 'file', file: { filename: 'spec.pdf', file_data: 'data:application/pdf;base64,BBB' } },
+          { type: 'text', text: '<attachment name="notes.md" id="t">\n# hi\n</attachment>' },
+          { type: 'text', text: 'Look' },
+        ],
+      },
+    ]);
+  });
+});
+
+describe('providerFetch retries', () => {
+  it('retries rate limits and overloads before the body is read, then gives up', async () => {
+    let calls = 0;
+    vi.stubGlobal('fetch', async () => {
+      calls++;
+      return calls < 3 ? new Response('busy', { status: 529, headers: { 'retry-after': '0' } }) : new Response('ok');
+    });
+    expect(await (await providerFetch('Test', 'https://x.test', {})).text()).toBe('ok');
+    expect(calls).toBe(3);
+
+    calls = 0;
+    vi.stubGlobal('fetch', async () => {
+      calls++;
+      return new Response('nope', { status: 400 });
+    });
+    expect((await providerFetch('Test', 'https://x.test', {})).status).toBe(400);
+    expect(calls).toBe(1);
+  });
+
+  it('reads retry-after and backs off otherwise', () => {
+    expect(retryDelay(new Response(null, { headers: { 'retry-after': '2' } }), 0)).toBe(2000);
+    expect(retryDelay(new Response(null, { headers: { 'retry-after': '999' } }), 0)).toBe(30_000);
+    const backoff = retryDelay(new Response(null), 1);
+    expect(backoff).toBeGreaterThanOrEqual(2400);
+    expect(backoff).toBeLessThanOrEqual(3600);
   });
 });
