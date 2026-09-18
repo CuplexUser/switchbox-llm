@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "node scripts/dev.ts",
     "dev:client": "vite",
-    "dev:server": "node --watch --env-file-if-exists=.env src/server/index.ts",
+    "dev:server": "node --watch-path=src/server --watch-path=src/shared --env-file-if-exists=.env src/server/index.ts",
     "build": "vite build",
     "start": "node --env-file-if-exists=.env src/server/index.ts",
     "lint": "oxlint",

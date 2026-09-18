@@ -237,7 +237,7 @@ export function buildReport(
 
   const groups = new Map<string, Priced[]>();
   for (const entry of priced) {
-    const key = `${entry.record.provider} ${entry.record.model}`;
+    const key = `${entry.record.provider}\x00${entry.record.model}`;
     groups.set(key, [...(groups.get(key) ?? []), entry]);
   }
   const models: UsageModelRow[] = [...groups.values()]
