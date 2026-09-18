@@ -122,6 +122,24 @@ export interface AppSettings {
   mcp: {
     servers: McpServerConfig[];
   };
+  workspace: WorkspaceSettings;
+}
+
+/** Which shell run_command uses. system: cmd.exe on Windows, /bin/sh elsewhere. */
+export type WorkspaceShell = 'system' | 'powershell' | 'bash';
+
+export interface WorkspaceSettings {
+  /** Most a chat's workspace may hold, in megabytes. */
+  quotaMb: number;
+  /** Largest single file, in megabytes. */
+  maxFileMb: number;
+  /** Timeout for run_command when the model doesn't ask for one. */
+  commandTimeoutSeconds: number;
+  /** Longest timeout a model may ask for. */
+  maxCommandTimeoutSeconds: number;
+  shell: WorkspaceShell;
+  /** Characters of stdout and of stderr returned to the model. */
+  outputChars: number;
 }
 
 export type SettingsSection = keyof AppSettings;
@@ -153,6 +171,8 @@ export interface Conversation {
   persist: boolean;
   useMemory: boolean;
   webAccess: boolean;
+  /** The chat has a file workspace its models can read and write. Off until turned on. */
+  workspace: boolean;
   /** Per-chat on/off for optional tool groups such as "code" or "mcp:<server id>". Missing groups use their default. */
   toolGroups: Record<string, boolean> | null;
   pinned: boolean;
@@ -399,6 +419,9 @@ export interface ToolInfo {
   defaultPolicy: ToolPolicy;
 }
 
+/** Chat switches that turn tool groups on: web access, memory and the workspace. */
+export type ToolGroupToggle = 'webAccess' | 'useMemory' | 'workspace';
+
 export interface ToolGroupInfo {
   id: string;
   label: string;
@@ -407,7 +430,9 @@ export interface ToolGroupInfo {
   /** Whether new chats start with the group on. Web and memory follow their own chat toggles. */
   onByDefault: boolean;
   /** Set when the group has a chat toggle of its own, so the tools menu leaves it out. */
-  toggledBy: 'webAccess' | 'useMemory' | null;
+  toggledBy: ToolGroupToggle | null;
+  /** The group is only offered while this chat toggle is on too. */
+  requires: ToolGroupToggle | null;
   tools: ToolInfo[];
   /** For MCP servers that could not be reached. */
   error: string | null;
@@ -430,8 +455,30 @@ export interface SearchHit {
   createdAt: string;
 }
 
+/** One file in a chat's workspace. */
+export interface WorkspaceFile {
+  /** Relative to the workspace, with forward slashes. */
+  path: string;
+  size: number;
+  modifiedAt: string;
+}
+
+export interface WorkspaceListing {
+  files: WorkspaceFile[];
+  /** Bytes used. */
+  usage: number;
+  /** Bytes allowed. */
+  quota: number;
+  /** Whether the chat's folder exists. */
+  exists: boolean;
+}
+
+/**
+ * The rows of an export. Version 1 is a JSON file with attachment bytes in base64. Version 2 is
+ * `switchbox.json` inside a ZIP archive, with attachment bytes and workspace files as their own entries.
+ */
 export interface ExportBundle {
-  version: 1;
+  version: 1 | 2;
   exportedAt: string;
   conversations: Conversation[];
   panes: Pane[];
@@ -439,8 +486,8 @@ export interface ExportBundle {
   systemPrompts: SystemPrompt[];
   memories: Memory[];
   memoryHistory?: MemoryHistoryEntry[];
-  /** File contents are base64. */
-  attachments?: (Attachment & { data: string })[];
+  /** File contents are base64 in version 1 and left out in version 2, where each file is an archive entry. */
+  attachments?: (Attachment & { data?: string })[];
   settings: Partial<AppSettings>;
 }
 

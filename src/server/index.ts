@@ -25,6 +25,10 @@ for (const conversation of temporary) {
 }
 
 const services = createServices(repos);
+// Workspaces of the temporary chats removed above, and of chats deleted while the server was down.
+const chatIds = new Set((await repos.conversations.findMany()).map((conversation) => conversation.id));
+const orphaned = await services.workspaces.prune(chatIds);
+if (orphaned > 0) log.info('removed workspaces of deleted chats', { count: orphaned });
 const unclaimed = await services.attachments.deleteUnclaimed(new Date(Date.now() - 24 * 60 * 60 * 1000));
 if (unclaimed > 0) log.info('removed files that were never sent', { count: unclaimed });
 // Replies saved before usage tracking existed.

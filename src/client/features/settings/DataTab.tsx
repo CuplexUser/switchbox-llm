@@ -15,12 +15,16 @@ export function DataTab() {
 
   async function importFile(file: File): Promise<void> {
     try {
-      const bundle: unknown = JSON.parse(await file.text());
-      const result = await api<{ imported: Record<string, number> }>('/data/import', { method: 'POST', json: bundle });
-      const { conversations = 0, messages = 0, memories = 0, systemPrompts = 0 } = result.imported;
+      // Exports are ZIP archives now; JSON files from earlier versions still import.
+      const archive = file.name.toLowerCase().endsWith('.zip') || file.type.includes('zip');
+      const result = archive
+        ? await api<{ imported: Record<string, number> }>('/data/import', { method: 'POST', headers: { 'Content-Type': 'application/zip' }, body: file })
+        : await api<{ imported: Record<string, number> }>('/data/import', { method: 'POST', json: JSON.parse(await file.text()) as unknown });
+      const { conversations = 0, messages = 0, memories = 0, systemPrompts = 0, workspaceFiles = 0 } = result.imported;
+      const files = workspaceFiles ? `, ${workspaceFiles} workspace files` : '';
       setStatus({
         severity: 'success',
-        text: `Imported ${conversations} chats, ${messages} messages, ${systemPrompts} prompts and ${memories} memories.`,
+        text: `Imported ${conversations} chats, ${messages} messages, ${systemPrompts} prompts, ${memories} memories${files}.`,
       });
       await client.invalidateQueries();
     } catch (error) {
@@ -53,17 +57,17 @@ export function DataTab() {
       <Panel>
         <SettingRow
           label="Export"
-          description="Download saved chats, prompts, memories and settings as JSON. API keys are not included."
+          description="Download saved chats with their attached files and workspaces, prompts, memories and settings as a ZIP archive. API keys are not included."
         >
           <Button variant="outlined" component="a" href="/api/data/export" download>
-            Export JSON
+            Export
           </Button>
         </SettingRow>
-        <SettingRow label="Import" description="Merge an export into this database. Items that already exist are skipped.">
+        <SettingRow label="Import" description="Merge an export (a ZIP archive, or JSON from earlier versions) into this database. Items that already exist are skipped.">
           <input
             ref={fileRef}
             type="file"
-            accept="application/json,.json"
+            accept="application/zip,.zip,application/json,.json"
             hidden
             onChange={(event) => {
               const file = event.target.files?.[0];
@@ -72,10 +76,10 @@ export function DataTab() {
             }}
           />
           <Button variant="outlined" onClick={() => fileRef.current?.click()}>
-            Import JSON
+            Import
           </Button>
         </SettingRow>
-        <SettingRow label="Delete all chats" description="Removes every chat and message. Prompts, memories and settings stay.">
+        <SettingRow label="Delete all chats" description="Removes every chat, message and workspace. Prompts, memories and settings stay.">
           <Button variant="outlined" color="error" onClick={() => setConfirmClear(true)}>
             Delete chats
           </Button>

@@ -11,6 +11,7 @@ _server done_ have their API and tests in place and are waiting for their UI.
 - **Phase C (memory):** done
 - **Phase D (security):** done
 - **Phase E (quality):** done
+- **Phase F (workspaces):** done
 
 ## A. Agents and tools
 
@@ -91,3 +92,20 @@ _server done_ have their API and tests in place and are waiting for their UI.
 - [x] **E6. Structured logging** with run and pane ids (`LOG_LEVEL`, `LOG_FORMAT`).
 - [x] **E7. Keep dates on import**. repolayer stamps `createdAt` and `updatedAt` on create, so imports write
       through a second set of repos over the same tables with timestamps off (`repos.undated`).
+
+## F. Workspaces
+
+- [x] **F1. Chat workspaces** (L). A chat's Files toggle gives it a folder under `WORKSPACE_DIR`, made on the
+      first write. `list_files`, `read_file`, `write_file`, `edit_file`, `delete_file`, `move_file` and
+      `find_in_files` run inside it. Every path goes through `WorkspaceService.resolve`, and there are limits
+      per chat and per file. Branching copies the folder and deleting a chat removes it.
+- [x] **F2. Run commands** (M). `run_command` runs in the workspace with the system shell, PowerShell or bash. It
+      asks first by default, gets an environment without API keys and no stdin, and kills its process tree at the
+      timeout or on stop. It reports output and changed files, and the tool description names the toolchains
+      found on the PATH.
+- [x] **F3. Files panel** (M). Browse, preview, upload, download (one file or a ZIP of all) and delete a chat's
+      files. The list reloads as tools change them.
+- [x] **F4. ZIP exports** (M). Exports are ZIP archives with the rows in `switchbox.json` and attachments and
+      workspace files as raw entries. Imports check each entry path, cap the unpacked size and still accept version 1 JSON.
+- [ ] **F5. Isolated commands** (L). An optional Docker or WSL backend for `run_command`, with the workspace
+      mounted and no network by default.

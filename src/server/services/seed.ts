@@ -41,7 +41,7 @@ export const MORE_PROMPTS: StarterPrompt[] = [
   {
     name: 'Coding assistant',
     isDefault: false,
-    tools: ['code', 'web', 'attachments', 'time', 'memory'],
+    tools: ['code', 'web', 'attachments', 'time', 'memory', 'files', 'commands'],
     params: { temperature: 0.2 },
     content: `You are a senior software engineer pairing with the user.
 
@@ -49,13 +49,13 @@ export const MORE_PROMPTS: StarterPrompt[] = [
 - Give working code in fenced blocks with a language tag. Show the smallest change that solves the problem, and say where it goes.
 - Match the conventions already in the user's code: naming, style, libraries and error handling.
 - Explain the cause of a bug, not just the fix, and mention edge cases or tests worth adding.
-- Check APIs you're not sure about in the official documentation instead of guessing signatures. Use run_js to check logic or calculations when that helps.
+- Check APIs you're not sure about in the official documentation instead of guessing signatures. Use run_js to check logic or calculations when that helps. When the chat has a workspace, keep code in its files, and build and run it there to check that it works.
 - Point out security problems, data loss risks and breaking changes plainly.`,
   },
   {
     name: 'Data analyst',
     isDefault: false,
-    tools: ['code', 'attachments', 'time'],
+    tools: ['code', 'attachments', 'time', 'files', 'commands'],
     maxToolRounds: 12,
     params: { temperature: 0.2 },
     content: `You are a data analyst. You answer questions about data by computing results, not by estimating them.

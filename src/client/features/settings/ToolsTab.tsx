@@ -19,7 +19,7 @@ import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { useState } from 'react';
-import type { AppSettings, KeepToolResults, McpServerConfig, ToolGroupInfo, ToolInfo, ToolPolicy } from '../../../shared/types.ts';
+import type { AppSettings, KeepToolResults, McpServerConfig, ToolGroupInfo, ToolInfo, ToolPolicy, WorkspaceShell } from '../../../shared/types.ts';
 import { useSettings, useTestMcpServer, useTools, useUpdateSettings } from '../../api/hooks.ts';
 import { ConfirmDialog } from '../../components/ConfirmDialog.tsx';
 import { clampInt } from '../../lib/format.ts';
@@ -30,6 +30,12 @@ const KEEP_OPTIONS: { value: KeepToolResults; label: string }[] = [
   { value: 'summary', label: 'Shortened' },
   { value: 'full', label: 'In full' },
   { value: 'off', label: 'Not kept' },
+];
+
+const SHELL_OPTIONS: { value: WorkspaceShell; label: string }[] = [
+  { value: 'system', label: 'System default' },
+  { value: 'powershell', label: 'PowerShell' },
+  { value: 'bash', label: 'bash' },
 ];
 
 const POLICY_HELP: Record<ToolPolicy, string> = {
@@ -103,9 +109,13 @@ function GroupCard({ group, onPolicy }: { group: ToolGroupInfo; onPolicy: (name:
             ? 'Follows each chat’s Web toggle'
             : group.toggledBy === 'useMemory'
               ? 'Follows each chat’s Memory toggle'
-              : group.onByDefault
-                ? 'On in new chats'
-                : 'Off in new chats'}
+              : group.toggledBy === 'workspace'
+                ? 'Follows each chat’s Files toggle'
+                : group.requires === 'workspace'
+                  ? 'Off in new chats; needs Files on'
+                  : group.onByDefault
+                    ? 'On in new chats'
+                    : 'Off in new chats'}
         </Typography>
       </Box>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
@@ -273,7 +283,11 @@ export function ToolsTab() {
   const [editing, setEditing] = useState<McpServerConfig | null>(null);
   const [removing, setRemoving] = useState<McpServerConfig | null>(null);
   if (!settings.data) return <Skeleton variant="rounded" height={420} />;
-  const { agent, mcp } = settings.data;
+  const { agent, mcp, workspace } = settings.data;
+
+  function setWorkspace<K extends keyof AppSettings['workspace']>(key: K, value: AppSettings['workspace'][K]): void {
+    update.mutate({ section: 'workspace', value: { ...workspace, [key]: value } });
+  }
 
   function setAgent<K extends keyof AppSettings['agent']>(key: K, value: AppSettings['agent'][K]): void {
     update.mutate({ section: 'agent', value: { ...agent, [key]: value } });
@@ -341,6 +355,100 @@ export function ToolsTab() {
               </MenuItem>
             ))}
           </TextField>
+        </SettingRow>
+      </Panel>
+
+      <SectionTitle description="Chats with Files on get a folder of their own that models can read and write. Turn on Run commands in a chat’s Tools menu to let models compile and run code there.">
+        Workspaces
+      </SectionTitle>
+      <Alert severity="warning" variant="outlined" sx={{ mb: 1.5 }}>
+        Commands run as ordinary programs on this computer, with your permissions. They start in the chat’s folder and can’t see
+        your API keys, but they are not isolated: a command can read or change any file you can. Keep Run a command on Ask unless you
+        trust the model with your machine.
+      </Alert>
+      <Panel>
+        <SettingRow label="Storage per chat" description="Most a chat’s workspace may hold, in megabytes." htmlFor="workspace-quota">
+          <TextField
+            id="workspace-quota"
+            type="number"
+            value={workspace.quotaMb}
+            onChange={(event) => setWorkspace('quotaMb', clampInt(event.target.value, 1, 10_000, workspace.quotaMb))}
+            slotProps={{ htmlInput: { min: 1, max: 10_000 } }}
+            sx={{ width: 110 }}
+          />
+        </SettingRow>
+        <SettingRow label="Largest file" description="Most one file may hold, in megabytes." htmlFor="workspace-file">
+          <TextField
+            id="workspace-file"
+            type="number"
+            value={workspace.maxFileMb}
+            onChange={(event) => setWorkspace('maxFileMb', clampInt(event.target.value, 1, 1_000, workspace.maxFileMb))}
+            slotProps={{ htmlInput: { min: 1, max: 1_000 } }}
+            sx={{ width: 110 }}
+          />
+        </SettingRow>
+        <SettingRow
+          label="Command timeout"
+          description="Seconds a command may run before it and everything it started are stopped, unless the model asks for longer."
+          htmlFor="workspace-timeout"
+        >
+          <TextField
+            id="workspace-timeout"
+            type="number"
+            value={workspace.commandTimeoutSeconds}
+            onChange={(event) => setWorkspace('commandTimeoutSeconds', clampInt(event.target.value, 1, workspace.maxCommandTimeoutSeconds, workspace.commandTimeoutSeconds))}
+            slotProps={{ htmlInput: { min: 1, max: workspace.maxCommandTimeoutSeconds } }}
+            sx={{ width: 110 }}
+          />
+        </SettingRow>
+        <SettingRow label="Longest timeout" description="The most seconds a model may ask a command to run for." htmlFor="workspace-max-timeout">
+          <TextField
+            id="workspace-max-timeout"
+            type="number"
+            value={workspace.maxCommandTimeoutSeconds}
+            onChange={(event) => {
+              const max = clampInt(event.target.value, 1, 3_600, workspace.maxCommandTimeoutSeconds);
+              update.mutate({
+                section: 'workspace',
+                value: { ...workspace, maxCommandTimeoutSeconds: max, commandTimeoutSeconds: Math.min(workspace.commandTimeoutSeconds, max) },
+              });
+            }}
+            slotProps={{ htmlInput: { min: 1, max: 3_600 } }}
+            sx={{ width: 110 }}
+          />
+        </SettingRow>
+        <SettingRow
+          label="Shell"
+          description="What runs each command. The system default is cmd.exe on Windows and /bin/sh elsewhere; bash on Windows means Git for Windows."
+          htmlFor="workspace-shell"
+        >
+          <TextField
+            id="workspace-shell"
+            select
+            value={workspace.shell}
+            onChange={(event) => setWorkspace('shell', event.target.value as WorkspaceShell)}
+            sx={{ width: 170 }}
+          >
+            {SHELL_OPTIONS.map((option) => (
+              <MenuItem key={option.value} value={option.value}>
+                {option.label}
+              </MenuItem>
+            ))}
+          </TextField>
+        </SettingRow>
+        <SettingRow
+          label="Command output kept"
+          description="Characters of output and of errors a model gets back from each command. The start and the end are kept when there is more."
+          htmlFor="workspace-output"
+        >
+          <TextField
+            id="workspace-output"
+            type="number"
+            value={workspace.outputChars}
+            onChange={(event) => setWorkspace('outputChars', clampInt(event.target.value, 1_000, 200_000, workspace.outputChars))}
+            slotProps={{ htmlInput: { min: 1_000, max: 200_000, step: 1_000 } }}
+            sx={{ width: 110 }}
+          />
         </SettingRow>
       </Panel>
 

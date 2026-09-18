@@ -1,3 +1,6 @@
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { ModelInfo, ProviderId, StreamEvent, StreamRequest } from '../../shared/types.ts';
 import { createServices } from '../app.ts';
 import type { Services } from '../context.ts';
@@ -40,20 +43,26 @@ export function fakeRegistry(provider: Provider): ProviderRegistry {
   } as unknown as ProviderRegistry;
 }
 
+/** A fresh folder for one test's workspaces. */
+export function tempWorkspaceDir(): string {
+  return mkdtempSync(join(tmpdir(), 'switchbox-workspaces-'));
+}
+
 export function setup(provider: Provider, toolSources: ToolSource[] = []): Services {
   const repos: Repos = memoryRepos();
-  return createServices(repos, { registry: fakeRegistry(provider), mcp: new McpManager(), toolSources });
+  return createServices(repos, { registry: fakeRegistry(provider), mcp: new McpManager(), toolSources, workspaceDir: tempWorkspaceDir() });
 }
 
 export async function seedConversation(
   repos: Repos,
-  options: { persist?: boolean; useMemory?: boolean; webAccess?: boolean; toolGroups?: Record<string, boolean> | null } = {},
+  options: { persist?: boolean; useMemory?: boolean; webAccess?: boolean; workspace?: boolean; toolGroups?: Record<string, boolean> | null } = {},
 ) {
   const conversation = await repos.conversations.create({
     title: 'New chat',
     persist: options.persist ?? true,
     useMemory: options.useMemory ?? true,
     webAccess: options.webAccess ?? false,
+    workspace: options.workspace ?? false,
     toolGroups: options.toolGroups ?? null,
     pinned: false,
     archived: false,

@@ -21,6 +21,8 @@ in parallel.
   Each reply shows what was searched and which sources were used
 - **Tools:** besides the web, a JavaScript sandbox, the current time, search across earlier chats, memory, and
   any tools from MCP servers you add. Each tool can run automatically, ask you first, or be off
+- **Workspaces:** a chat can have a folder of files that models create, read and edit, and, if you allow it, a
+  model can compile and run code there. A Files panel in the chat shows, previews, uploads and downloads them
 - **Attachments:** images, PDFs and text files can be attached to a message
 - **Memory:** facts about you that are added to the system prompt. Models can save, update and forget facts
   when you ask them to, and a model you choose can suggest new ones for you to keep or dismiss
@@ -55,6 +57,7 @@ API keys go in `.env` and stay on the local server:
 | `BRAVE_API_KEY` | Web search through Brave Search |
 | `PORT` | API port, default `8787` |
 | `DATABASE_FILE` | SQLite file, default `./data/switchbox.db` |
+| `WORKSPACE_DIR` | Folder for chat workspaces, default `./data/workspaces` |
 | `LOG_LEVEL` | `debug`, `info` (default), `warn` or `error` |
 | `LOG_FORMAT` | `json` for one JSON object per line instead of text |
 
@@ -95,13 +98,15 @@ reply" limit under Settings → Tools. After that, the model is asked to answer 
 | `current_time` | Current time | The date and time in any time zone |
 | `conversation_search` | Search earlier chats | Finds messages in other saved chats that contain all the given words |
 | `read_attachment` | Read attached files | Reads the rest of a long text file attached to the chat |
+| `list_files`, `read_file`, `write_file`, `edit_file`, `delete_file`, `move_file`, `find_in_files` | Workspace files | See [Workspaces](#workspaces). Follows each chat's Files toggle |
+| `run_command` | Run commands | Runs a command in the chat's workspace folder and returns its exit code, output and changed files. Asks first by default |
 | `mcp_<server>_<tool>` | One per MCP server | Tools from the MCP servers you add |
 
 - **Chat toggles:** the Tools menu in a chat's header turns optional groups on or off for that chat. Web and
   memory keep their own toggles
 - **Policies:** each tool is **Auto** (runs without asking), **Ask** (the reply pauses and shows the call's
   arguments until you allow or decline it) or **Off** (not offered). MCP tools default to Ask, the others to
-  Auto. A declined call tells the model you declined, and stopping a reply declines anything still waiting
+  Auto, except `run_command`, which asks. A declined call tells the model you declined, and stopping a reply declines anything still waiting
 - **Profiles:** a profile can limit its panes to some tool groups and set its own round limit
 - **Parallel calls:** calls from one round run a few at a time, set by "Tool calls at once"
 - **Later messages:** follow-up questions see earlier tool calls and their results, shortened by default, so a
@@ -116,6 +121,40 @@ reply" limit under Settings → Tools. After that, the model is asked to answer 
 
 The `run_js` sandbox runs in a worker thread with a memory cap and a 5 second limit, inside a V8 context with no
 Node globals (no `require`, `process`, network or file access) where compiling code from strings is disabled.
+
+### Workspaces
+
+Turn on **Files** in a chat's header, or on the new chat page, to give the chat a workspace. It is a folder of
+its own under `WORKSPACE_DIR`, made the first time a file is written, so chats that never use it leave nothing
+on disk. Every pane in the chat shares it. The system prompt lists the files already there, and the folder
+button next to the switch opens the Files panel. The panel previews text and images, and you can upload by
+button or drag and drop, download one file or all of them as a ZIP archive, and delete files.
+
+- **Paths:** every path is checked to stay inside the chat's folder. Absolute paths, `..`, Windows device names
+  and alternate data streams are refused, and so are symbolic links or junctions that lead out of it
+- **Limits:** 100 MB per chat and 20 MB per file by default, under Settings → Tools → Workspaces
+- **Lifecycle:** turning Files off keeps the files. Branching a chat copies them, and deleting a chat deletes
+  them. Temporary chats lose theirs on restart, like their messages
+- **Serving:** the panel serves files as images or plain text, sandboxed and never sniffed, so an HTML or SVG
+  file a model wrote can't run scripts in the app
+
+**Run commands** is a separate tool group, off in new chats and turned on in a chat's Tools menu. It only works
+while Files is on. `run_command` starts the system shell (cmd.exe on Windows, `/bin/sh` elsewhere; PowerShell
+or bash can be chosen) in the workspace folder, so models can use whatever compilers and runtimes you have
+installed. The tool's description tells the model which common ones are on the PATH.
+
+Commands are **not sandboxed**. They run as ordinary programs with your user account, and an approved command
+can read or change any file you can. What Switchbox does:
+
+- `run_command` defaults to Ask, and the approval card shows the command line itself
+- API keys and other variables from `.env` are left out of a command's environment. Only what shells and
+  compilers need (such as `PATH`, `SYSTEMROOT` and `HOME`) is passed on, and `TEMP` points into the workspace
+- stdin is closed, so a program waiting for input can't hang forever. It runs until the timeout (60 seconds by
+  default), and then it and everything it started are killed. Stopping the reply kills it too
+- output is capped at 20,000 characters per stream, keeping the start and the end
+- an import never changes the Run commands policy
+
+For real isolation, run Switchbox itself inside a container or VM.
 
 ### MCP servers
 
@@ -218,8 +257,8 @@ src/
                 reasoning settings, prompt caching, retries)
     tools/      tool registry, argument checks, approval policies, built-in tools and MCP servers
     web/        Tavily and Brave search, safe page fetching
-    services/   chat runs and the tool loop, message storage and history, attachments, memory, search,
-                usage reports, settings
+    services/   chat runs and the tool loop, message storage and history, attachments, workspaces and
+                commands, ZIP archives, memory, search, usage reports, settings
     routes/     REST endpoints and the /api/chat/stream SSE endpoint
   client/    React 19, MUI 9, TanStack Query, Zustand
     features/   chat, memory, settings, usage
@@ -245,8 +284,12 @@ reached is stored in the settings table.
 Server logs have one line per event, with fields such as the run and pane id, so a reply can be followed from
 start to finish.
 
-Settings → Data exports and imports everything except API keys as JSON, including attachments and tool traces.
-Imported chats, profiles and memories keep their original dates.
+Settings → Data exports everything except API keys as a ZIP archive. The rows, tool traces included, are in
+`switchbox.json`, each attachment's bytes are under `attachments/<id>`, and each saved chat's workspace is under
+`workspaces/<chat id>/`. Files keep their raw bytes instead of becoming base64 text, and already-compressed
+formats are stored as they are. Imports take these archives and the JSON files earlier versions exported.
+Imported chats, profiles and memories keep their original dates, workspace files already present are left alone,
+and archive entries go through the same path checks as the workspace tools.
 
 ## Roadmap
 

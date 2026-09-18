@@ -26,6 +26,7 @@ export const conversationSchema = defineSchema({
   persist: { type: 'boolean' },
   useMemory: { type: 'boolean', column: 'use_memory' },
   webAccess: { type: 'boolean', column: 'web_access' },
+  workspace: { type: 'boolean' },
   toolGroups: { type: 'json', nullable: true, column: 'tool_groups' },
   pinned: { type: 'boolean' },
   archived: { type: 'boolean' },

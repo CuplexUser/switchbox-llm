@@ -26,6 +26,7 @@ import type {
   UsageRange,
   UsageReport,
   WebStatus,
+  WorkspaceListing,
 } from '../../shared/types.ts';
 import { fileToBase64 } from '../lib/files.ts';
 import { api } from './client.ts';
@@ -45,6 +46,7 @@ export const keys = {
   duplicates: ['memories', 'duplicates'] as const,
   suggestionStatus: ['memories', 'suggestion-status'] as const,
   tools: ['tools'] as const,
+  workspace: (id: string) => ['workspace', id] as const,
   search: (query: string) => ['search', query] as const,
   usage: (range: UsageRange, provider: ProviderId | null) => ['usage', range, provider ?? 'all'] as const,
 };
@@ -74,7 +76,7 @@ export function useUpdateSettings() {
     onSuccess: (settings, { section }) => {
       client.setQueryData(keys.settings, settings);
       if (section === 'web') void client.invalidateQueries({ queryKey: keys.webStatus });
-      if (section === 'agent' || section === 'mcp') void client.invalidateQueries({ queryKey: keys.tools });
+      if (section === 'agent' || section === 'mcp' || section === 'workspace') void client.invalidateQueries({ queryKey: keys.tools });
       if (section === 'providers') {
         void client.invalidateQueries({ queryKey: keys.providers });
         void client.invalidateQueries({ queryKey: keys.models });
@@ -188,6 +190,7 @@ export interface NewConversation {
   persist?: boolean;
   useMemory?: boolean;
   webAccess?: boolean;
+  workspace?: boolean;
   panes: (ModelRef & { systemPromptId?: string | null })[];
 }
 
@@ -285,6 +288,40 @@ export function useUploadAttachment() {
         method: 'POST',
         json: { name: file.name, mimeType: file.type, data: await fileToBase64(file) },
       }),
+  });
+}
+
+// Workspaces
+
+export function workspaceFileUrl(conversationId: string, path: string, download = false): string {
+  return `/api/conversations/${conversationId}/files/raw?path=${encodeURIComponent(path)}${download ? '&download=1' : ''}`;
+}
+
+export function useWorkspaceFiles(conversationId: string, enabled = true) {
+  return useQuery({
+    queryKey: keys.workspace(conversationId),
+    queryFn: () => api<WorkspaceListing>(`/conversations/${conversationId}/files`),
+    enabled,
+  });
+}
+
+/** Puts a file in the workspace at `path`, replacing one already there. */
+export function useUploadWorkspaceFile(conversationId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ file, path }: { file: File; path: string }) =>
+      api<WorkspaceListing>(`/conversations/${conversationId}/files`, { method: 'POST', json: { path, data: await fileToBase64(file) } }),
+    onSuccess: (listing) => client.setQueryData(keys.workspace(conversationId), listing),
+  });
+}
+
+/** Deletes a file or folder, or the whole workspace when `path` is null. */
+export function useDeleteWorkspaceFile(conversationId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (path: string | null) =>
+      api<WorkspaceListing>(`/conversations/${conversationId}/files${path ? `?path=${encodeURIComponent(path)}` : ''}`, { method: 'DELETE' }),
+    onSuccess: (listing) => client.setQueryData(keys.workspace(conversationId), listing),
   });
 }
 

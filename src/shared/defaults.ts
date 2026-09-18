@@ -56,6 +56,14 @@ export const DEFAULT_SETTINGS: AppSettings = {
   mcp: {
     servers: [],
   },
+  workspace: {
+    quotaMb: 100,
+    maxFileMb: 20,
+    commandTimeoutSeconds: 60,
+    maxCommandTimeoutSeconds: 600,
+    shell: 'system',
+    outputChars: 20_000,
+  },
 };
 
 /** Layers generation params left to right; later non-null values win. */

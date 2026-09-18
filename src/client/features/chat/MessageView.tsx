@@ -147,8 +147,23 @@ export function UserMessage({
   );
 }
 
+/** A command to show as a command line, with where and how long it may run, instead of raw JSON. */
+function commandDetails(request: ApprovalRequest): { command: string; note: string } | null {
+  if (request.toolName !== 'run_command') return null;
+  try {
+    const args = JSON.parse(request.arguments) as { command?: unknown; cwd?: unknown; timeout_seconds?: unknown };
+    if (typeof args.command !== 'string') return null;
+    const where = typeof args.cwd === 'string' && args.cwd ? `the workspace folder “${args.cwd}”` : 'the chat’s workspace folder';
+    const limit = typeof args.timeout_seconds === 'number' ? `, for up to ${args.timeout_seconds} seconds` : '';
+    return { command: args.command, note: `Runs on this computer in ${where}${limit}. It is not isolated from your other files.` };
+  } catch {
+    return null;
+  }
+}
+
 /** A tool call waiting for the user, with its arguments. */
 function ApprovalCard({ request }: { request: ApprovalRequest }) {
+  const command = commandDetails(request);
   const approve = useChatStore((state) => state.approve);
   const [answered, setAnswered] = useState(false);
   const answer = (approved: boolean) => {
@@ -183,8 +198,13 @@ function ApprovalCard({ request }: { request: ApprovalRequest }) {
           overflowWrap: 'anywhere',
         }}
       >
-        {request.arguments}
+        {command ? `> ${command.command}` : request.arguments}
       </Box>
+      {command && (
+        <Typography variant="caption" component="div" sx={{ mt: -0.5, mb: 1.25, color: 'var(--sb-text-muted)' }}>
+          {command.note}
+        </Typography>
+      )}
       <Box sx={{ display: 'flex', gap: 1 }}>
         <Button size="small" variant="contained" disabled={answered} onClick={() => answer(true)}>
           Allow

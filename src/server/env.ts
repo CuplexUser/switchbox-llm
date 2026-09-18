@@ -39,5 +39,7 @@ export function searchKeys(): { tavily: string | null; brave: string | null } {
 export const config = {
   port: Number(process.env.PORT ?? 8787),
   databaseFile: process.env.DATABASE_FILE ?? './data/switchbox.db',
+  /** One folder per chat with its workspace turned on. */
+  workspaceDir: process.env.WORKSPACE_DIR ?? './data/workspaces',
   production: process.env.NODE_ENV === 'production',
 };

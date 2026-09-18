@@ -159,15 +159,15 @@ describe('addMissingColumns', () => {
     db.close();
 
     const added = addMissingColumns(file, [
-      { table: 'conversations', schema: conversationSchema, defaults: { web_access: '1' } },
+      { table: 'conversations', schema: conversationSchema, defaults: { web_access: '1', workspace: '0' } },
       { table: 'messages', schema: messageSchema },
     ]);
-    expect(added).toEqual(['conversations.web_access', 'conversations.tool_groups']);
+    expect(added).toEqual(['conversations.web_access', 'conversations.workspace', 'conversations.tool_groups']);
 
     const check = new DatabaseSync(file);
     expect(check.prepare('SELECT web_access FROM conversations').get()).toEqual({ web_access: 1 });
     check.close();
-    expect(addMissingColumns(file, [{ table: 'conversations', schema: conversationSchema, defaults: { web_access: '1' } }])).toEqual([]);
+    expect(addMissingColumns(file, [{ table: 'conversations', schema: conversationSchema, defaults: { web_access: '1', workspace: '0' } }])).toEqual([]);
   });
 });
 
@@ -204,7 +204,7 @@ describe('seedSamplePrompts', () => {
     expect(await seedSamplePrompts(repos)).toBe(SAMPLE_PROMPTS.length + MORE_PROMPTS.length);
     const prompts = await repos.systemPrompts.findMany();
     expect(prompts.filter((prompt) => prompt.isDefault)).toHaveLength(1);
-    expect(prompts.find((prompt) => prompt.name === 'Data analyst')).toMatchObject({ tools: ['code', 'attachments', 'time'], maxToolRounds: 12 });
+    expect(prompts.find((prompt) => prompt.name === 'Data analyst')).toMatchObject({ tools: ['code', 'attachments', 'time', 'files', 'commands'], maxToolRounds: 12 });
 
     await repos.systemPrompts.deleteMany();
     expect(await seedSamplePrompts(repos)).toBe(0);

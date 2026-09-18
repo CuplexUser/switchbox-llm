@@ -18,6 +18,14 @@ export function groupOn(conversation: ConversationDetail, group: ToolGroupInfo):
   return conversation.toolGroups?.[group.id] ?? group.onByDefault;
 }
 
+/** Why a group can't be used yet: a chat switch it needs is off, such as Files for commands. */
+function missingRequirement(conversation: ConversationDetail, group: ToolGroupInfo): string | null {
+  if (group.requires === 'workspace' && !conversation.workspace) return 'Turn on Files for this chat first.';
+  if (group.requires === 'webAccess' && !conversation.webAccess) return 'Turn on web access for this chat first.';
+  if (group.requires === 'useMemory' && !conversation.useMemory) return 'Turn on memory for this chat first.';
+  return null;
+}
+
 /** The chat's optional tool groups: run code, search earlier chats, MCP servers and so on. */
 export function ToolsMenu({ conversation, compact }: { conversation: ConversationDetail; compact: boolean }) {
   const tools = useTools();
@@ -25,7 +33,7 @@ export function ToolsMenu({ conversation, compact }: { conversation: Conversatio
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   // Web and memory have their own chips; attachments are only offered when a file is attached.
   const groups = (tools.data ?? []).filter((group) => group.toggledBy === null && group.id !== 'attachments');
-  const onCount = groups.filter((group) => groupOn(conversation, group)).length;
+  const onCount = groups.filter((group) => groupOn(conversation, group) && !missingRequirement(conversation, group)).length;
   const failing = groups.some((group) => group.error && groupOn(conversation, group));
 
   function toggle(group: ToolGroupInfo): void {
@@ -64,20 +72,23 @@ export function ToolsMenu({ conversation, compact }: { conversation: Conversatio
             {tools.isLoading ? 'Loading tools…' : 'No optional tools.'}
           </Typography>
         )}
-        {groups.map((group) => (
-          <MenuItem key={group.id} onClick={() => toggle(group)} sx={{ alignItems: 'flex-start', whiteSpace: 'normal' }}>
-            <Checkbox edge="start" size="small" checked={groupOn(conversation, group)} tabIndex={-1} disableRipple sx={{ mt: -0.5 }} />
-            <ListItemText
-              primary={group.kind === 'mcp' ? `${group.label} (MCP)` : group.label}
-              secondary={
-                <Box component="span" sx={{ color: group.error ? 'error.main' : undefined }}>
-                  {group.error ? `Could not connect: ${group.error.split('\n')[0]}` : group.description}
-                </Box>
-              }
-              slotProps={{ primary: { variant: 'body2', sx: { fontWeight: 550 } }, secondary: { variant: 'caption' } }}
-            />
-          </MenuItem>
-        ))}
+        {groups.map((group) => {
+          const missing = missingRequirement(conversation, group);
+          return (
+            <MenuItem key={group.id} onClick={() => toggle(group)} disabled={Boolean(missing)} sx={{ alignItems: 'flex-start', whiteSpace: 'normal' }}>
+              <Checkbox edge="start" size="small" checked={!missing && groupOn(conversation, group)} tabIndex={-1} disableRipple sx={{ mt: -0.5 }} />
+              <ListItemText
+                primary={group.kind === 'mcp' ? `${group.label} (MCP)` : group.label}
+                secondary={
+                  <Box component="span" sx={{ color: group.error ? 'error.main' : undefined }}>
+                    {group.error ? `Could not connect: ${group.error.split('\n')[0]}` : missing ? `${group.description} ${missing}` : group.description}
+                  </Box>
+                }
+                slotProps={{ primary: { variant: 'body2', sx: { fontWeight: 550 } }, secondary: { variant: 'caption' } }}
+              />
+            </MenuItem>
+          );
+        })}
         <Divider />
         <MenuItem component={RouterLink} to="/settings/tools" onClick={() => setAnchor(null)}>
           <Typography variant="body2" color="text.secondary">

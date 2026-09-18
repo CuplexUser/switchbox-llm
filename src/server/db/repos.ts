@@ -55,7 +55,7 @@ export function allRepos(repos: Repos): Repo<unknown>[] {
 export async function openRepos(file: string): Promise<Repos> {
   mkdirSync(dirname(file), { recursive: true });
   const added = addMissingColumns(file, [
-    { table: 'conversations', schema: conversationSchema, defaults: { web_access: '1' } },
+    { table: 'conversations', schema: conversationSchema, defaults: { web_access: '1', workspace: '0' } },
     { table: 'messages', schema: messageSchema },
     { table: 'system_prompts', schema: systemPromptSchema },
     { table: 'memories', schema: memorySchema },

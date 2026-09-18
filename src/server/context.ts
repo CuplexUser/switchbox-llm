@@ -10,6 +10,7 @@ import type { MessageStore } from './services/messages.ts';
 import type { SearchService } from './services/search.ts';
 import type { SettingsService } from './services/settings.ts';
 import type { UsageService } from './services/usage.ts';
+import type { WorkspaceService } from './services/workspaces.ts';
 import type { McpManager } from './tools/mcp.ts';
 import type { ToolRegistry } from './tools/registry.ts';
 
@@ -26,6 +27,7 @@ export interface Services {
   approvals: ApprovalBroker;
   chat: ChatService;
   usage: UsageService;
+  workspaces: WorkspaceService;
 }
 
 export function badRequest(message: string): HTTPException {

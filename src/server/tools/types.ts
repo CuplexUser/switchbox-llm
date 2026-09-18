@@ -1,4 +1,4 @@
-import type { ActivityItem, AppSettings, AttachmentRef, ResolvedSearch, Source, ToolPolicy } from '../../shared/types.ts';
+import type { ActivityItem, AppSettings, AttachmentRef, ResolvedSearch, Source, ToolGroupToggle, ToolPolicy } from '../../shared/types.ts';
 import type { ConversationRow } from '../db/schemas.ts';
 import type { ToolSpec } from '../providers/types.ts';
 import type { SearchProvider } from '../web/search.ts';
@@ -66,7 +66,10 @@ export interface ToolGroup {
   description: string;
   kind: 'builtin' | 'mcp';
   onByDefault: boolean;
-  toggledBy: 'webAccess' | 'useMemory' | null;
+  /** A chat switch that turns the group on and off, instead of the tools menu. */
+  toggledBy: ToolGroupToggle | null;
+  /** A chat switch that must also be on, e.g. commands need the workspace. */
+  requires?: ToolGroupToggle;
 }
 
 /** Supplies tools and their groups. Built-in tools are fixed; MCP servers change with settings. */

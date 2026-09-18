@@ -19,12 +19,14 @@ import { isToolsUnsupported, type ChatRequest, type LoopAttachment, type LoopMes
 import { UNTRUSTED_GUIDANCE, type ToolRegistry } from '../tools/registry.ts';
 import type { ToolDefinition, ToolResult, ToolRunContext, WebPlan } from '../tools/types.ts';
 import { planWeb, webGuidance } from '../tools/web.ts';
+import { workspaceGuidance } from '../tools/workspace.ts';
 import type { ApprovalBroker } from './approvals.ts';
 import type { AttachmentService } from './attachments.ts';
 import { buildHistory, fitToBudget, traceForStorage } from './history.ts';
 import { buildSystemPrompt, memoryGuidance, type MemoryService } from './memory.ts';
 import { toMessage, type MessageStore } from './messages.ts';
 import type { SettingsService } from './settings.ts';
+import type { WorkspaceService } from './workspaces.ts';
 
 export const DEFAULT_TITLE = 'New chat';
 /** Bound on resuming a turn the provider parked mid-search (Anthropic pause_turn). */
@@ -86,6 +88,7 @@ export interface ChatDependencies {
   store: MessageStore;
   attachments: AttachmentService;
   approvals: ApprovalBroker;
+  workspaces: WorkspaceService;
 }
 
 interface Assembled {
@@ -165,11 +168,19 @@ export class ChatService {
     const hasMemoryTools = offered.some((tool) => tool.group === 'memory');
     const facts = hasMemoryTools ? await memory.activeFacts({ query, profileId: pane.systemPromptId }) : [];
 
+    const workspace = offered.some((tool) => tool.group === 'files')
+      ? workspaceGuidance(
+          (await this.deps.workspaces.exists(conversation.id)) ? await this.deps.workspaces.files(conversation.id) : [],
+          offered.some((tool) => tool.group === 'commands'),
+        )
+      : '';
+
     const base = pane.systemPrompt ?? profile?.content ?? '';
     const today = new Date().toISOString().slice(0, 10);
     const system = [
       buildSystemPrompt(base, facts),
       hasMemoryTools ? memoryGuidance() : '',
+      workspace,
       webGuidance({ ...web, search: offered.some((tool) => tool.spec.name === 'web_search') ? web.search : null, fetch: offered.some((tool) => tool.spec.name === 'web_fetch') }),
       offered.some((tool) => tool.untrusted) ? UNTRUSTED_GUIDANCE : '',
       offered.length > 0 || web.nativeSearch ? `Today's date is ${today}.` : '',

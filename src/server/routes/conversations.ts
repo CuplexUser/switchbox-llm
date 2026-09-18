@@ -46,7 +46,7 @@ function paneData(conversationId: string, position: number, pane: NewPane, promp
   };
 }
 
-export function conversationRoutes({ repos, settings, chat, store, attachments }: Services): Hono {
+export function conversationRoutes({ repos, settings, chat, store, attachments, workspaces }: Services): Hono {
   const app = new Hono();
 
   async function loadConversation(id: string): Promise<ConversationRow> {
@@ -107,6 +107,7 @@ export function conversationRoutes({ repos, settings, chat, store, attachments }
         persist: body.persist ?? general.persistByDefault,
         useMemory: body.useMemory ?? memory.useByDefault,
         webAccess: body.webAccess ?? web.useByDefault,
+        workspace: body.workspace === true,
         toolGroups: body.toolGroups ?? null,
         pinned: false,
         archived: false,
@@ -124,9 +125,10 @@ export function conversationRoutes({ repos, settings, chat, store, attachments }
     const current = await loadConversation(id);
     const body = await readJson<Partial<Conversation>>(c);
     validateToolGroups(body.toolGroups);
+    if (body.workspace !== undefined && typeof body.workspace !== 'boolean') throw badRequest('workspace must be true or false');
     const row = await repos.conversations.update(
       id,
-      pick(body, ['title', 'persist', 'useMemory', 'webAccess', 'toolGroups', 'pinned', 'archived']),
+      pick(body, ['title', 'persist', 'useMemory', 'webAccess', 'workspace', 'toolGroups', 'pinned', 'archived']),
     );
     // Saving a temporary chat writes what was said so far; making a chat temporary takes it out of the database.
     if (body.persist === true && !current.persist) await store.persist(id);
@@ -143,6 +145,7 @@ export function conversationRoutes({ repos, settings, chat, store, attachments }
       await tx.delete(id);
     });
     await attachments.deleteForConversation(id);
+    await workspaces.deleteFor(id);
     return c.body(null, 204);
   });
 
@@ -178,6 +181,7 @@ export function conversationRoutes({ repos, settings, chat, store, attachments }
       persist: source.persist,
       useMemory: source.useMemory,
       webAccess: source.webAccess,
+      workspace: source.workspace,
       toolGroups: source.toolGroups,
       pinned: false,
       archived: false,
@@ -205,6 +209,8 @@ export function conversationRoutes({ repos, settings, chat, store, attachments }
       kept.push({ ...row, attachments: refs.length ? newRefs : row.attachments });
     }
     await store.copy(branch, newPane.id, kept, () => randomUUID());
+    // The branch starts with the files as they are now, and the two chats change them separately from here.
+    await workspaces.copy(source.id, branch.id);
     return c.json(await detail(branch), 201);
   });
 

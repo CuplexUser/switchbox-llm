@@ -64,8 +64,8 @@ export class ToolRegistry {
   /** Whether a chat has a group turned on, before profile limits and per-tool checks. */
   groupOn(group: ToolGroup, environment: ToolEnvironment): boolean {
     const { conversation } = environment;
-    if (group.toggledBy === 'webAccess') return conversation.webAccess;
-    if (group.toggledBy === 'useMemory') return conversation.useMemory;
+    if (group.requires && !conversation[group.requires]) return false;
+    if (group.toggledBy) return conversation[group.toggledBy];
     const overrides = (conversation.toolGroups ?? {}) as Record<string, boolean>;
     return overrides[group.id] ?? group.onByDefault;
   }
@@ -95,6 +95,7 @@ export class ToolRegistry {
       kind: group.kind,
       onByDefault: group.onByDefault,
       toggledBy: group.toggledBy,
+      requires: group.requires ?? null,
       error: this.sources.map((source) => source.groupError?.(group.id) ?? null).find(Boolean) ?? null,
       tools: tools
         .filter((tool) => tool.group === group.id)

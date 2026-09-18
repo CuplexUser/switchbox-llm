@@ -15,6 +15,9 @@ export interface Migration {
 
 export const SCHEMA_VERSION_ROW = '_schema_version';
 
+/** Starter profiles that gained the workspace groups after they were first seeded. */
+const STARTER_PROFILES_WITH_WORKSPACE = ['Coding assistant', 'Data analyst'];
+
 export const MIGRATIONS: Migration[] = [
   {
     version: 1,
@@ -28,6 +31,20 @@ export const MIGRATIONS: Migration[] = [
         await repos.settings.create({ id: 'agent', value: { maxToolRounds } });
       }
       await repos.settings.update('web', { value: rest });
+    },
+  },
+  {
+    version: 2,
+    name: 'let the coding and data starter profiles use workspace files and commands',
+    async up({ repos }) {
+      for (const name of STARTER_PROFILES_WITH_WORKSPACE) {
+        for (const profile of await repos.systemPrompts.findMany({ where: { name } })) {
+          const tools = profile.tools as string[] | null;
+          // Null already allows every group.
+          if (!Array.isArray(tools) || tools.includes('files')) continue;
+          await repos.systemPrompts.update(profile.id, { tools: [...tools, 'files', 'commands'] });
+        }
+      }
     },
   },
 ];

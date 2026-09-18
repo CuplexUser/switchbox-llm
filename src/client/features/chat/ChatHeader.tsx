@@ -1,19 +1,23 @@
 import AddRoundedIcon from '@mui/icons-material/AddRounded';
 import CheckRoundedIcon from '@mui/icons-material/CheckRounded';
+import FolderOpenOutlinedIcon from '@mui/icons-material/FolderOpenOutlined';
+import FolderOutlinedIcon from '@mui/icons-material/FolderOutlined';
 import HistoryToggleOffRoundedIcon from '@mui/icons-material/HistoryToggleOffRounded';
 import PsychologyAltOutlinedIcon from '@mui/icons-material/PsychologyAltOutlined';
 import PublicRoundedIcon from '@mui/icons-material/PublicRounded';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import ButtonBase from '@mui/material/ButtonBase';
+import IconButton from '@mui/material/IconButton';
 import InputBase from '@mui/material/InputBase';
 import Tooltip from '@mui/material/Tooltip';
 import { useState, type ReactNode } from 'react';
 import { MAX_PANES } from '../../../shared/defaults.ts';
 import type { ConversationDetail } from '../../../shared/types.ts';
-import { useUpdateConversation } from '../../api/hooks.ts';
+import { useUpdateConversation, useWorkspaceFiles } from '../../api/hooks.ts';
 import { ChatActionsMenu } from './ChatActionsMenu.tsx';
 import { ToolsMenu } from './ToolsMenu.tsx';
+import { WorkspacePanel } from './WorkspacePanel.tsx';
 
 function ToggleChip({
   on,
@@ -91,7 +95,40 @@ function TitleField({ conversation }: { conversation: ConversationDetail }) {
   );
 }
 
-/** The chat's title, its saved, memory and web switches, its menus and the Add model button. */
+/** The workspace switch, and a button for its files once there is anything to see. */
+function WorkspaceControls({ data, narrow }: { data: ConversationDetail; narrow: boolean }) {
+  const updateConversation = useUpdateConversation();
+  const listing = useWorkspaceFiles(data.id);
+  const [open, setOpen] = useState(false);
+  const count = listing.data?.files.length ?? 0;
+  const showFiles = data.workspace || Boolean(listing.data?.exists);
+
+  return (
+    <>
+      <ToggleChip
+        on={data.workspace}
+        onClick={() => updateConversation.mutate({ id: data.id, workspace: !data.workspace })}
+        icon={<FolderOutlinedIcon sx={{ fontSize: 15 }} />}
+        label={narrow ? '' : data.workspace ? 'Files on' : 'Files off'}
+        tooltip={
+          data.workspace
+            ? 'Models can create, read and edit files in this chat’s workspace. Click to turn off; the files are kept.'
+            : 'Give this chat a workspace folder that models can keep files in. Running commands is a separate tool in the Tools menu.'
+        }
+      />
+      {showFiles && (
+        <Tooltip title={count ? `Workspace: ${count} ${count === 1 ? 'file' : 'files'}` : 'Workspace files'}>
+          <IconButton size="small" onClick={() => setOpen(true)} aria-label="Show workspace files" sx={{ width: 28, height: 28 }}>
+            <FolderOpenOutlinedIcon sx={{ fontSize: 17 }} />
+          </IconButton>
+        </Tooltip>
+      )}
+      <WorkspacePanel conversation={data} open={open} onClose={() => setOpen(false)} />
+    </>
+  );
+}
+
+/** The chat's title, its saved, memory, web and workspace switches, its menus and the Add model button. */
 export function ChatHeader({
   data,
   narrow,
@@ -160,6 +197,7 @@ export function ChatHeader({
             : 'Models answer without web access. Click to turn on.'
         }
       />
+      <WorkspaceControls data={data} narrow={narrow} />
       <ToolsMenu conversation={data} compact={narrow} />
       <ChatActionsMenu conversation={data} />
       <Tooltip title={panes.length >= MAX_PANES ? `Up to ${MAX_PANES} models per chat` : 'Add a model to compare'}>

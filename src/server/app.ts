@@ -4,6 +4,7 @@ import { NotFoundError, QueryError, UniqueConstraintError } from 'repolayer';
 import type { Services } from './context.ts';
 import type { Repos } from './db/repos.ts';
 import { createLogger } from './log.ts';
+import { config } from './env.ts';
 import { ProviderRegistry } from './providers/registry.ts';
 import { attachmentRoutes } from './routes/attachments.ts';
 import { chatRoutes } from './routes/chat.ts';
@@ -14,8 +15,10 @@ import { promptRoutes } from './routes/prompts.ts';
 import { searchRoutes } from './routes/search.ts';
 import { settingsRoutes } from './routes/settings.ts';
 import { usageRoutes } from './routes/usage.ts';
+import { workspaceRoutes } from './routes/workspace.ts';
 import { localOnly } from './security.ts';
 import { ApprovalBroker } from './services/approvals.ts';
+import { ArchiveError } from './services/archive.ts';
 import { AttachmentError, AttachmentService } from './services/attachments.ts';
 import { ChatService } from './services/chat.ts';
 import { MemoryService } from './services/memory.ts';
@@ -23,6 +26,7 @@ import { MessageStore } from './services/messages.ts';
 import { SearchService } from './services/search.ts';
 import { SettingsService } from './services/settings.ts';
 import { UsageService } from './services/usage.ts';
+import { WorkspaceError, WorkspaceService } from './services/workspaces.ts';
 import { codeTools } from './tools/code.ts';
 import { libraryTools } from './tools/library.ts';
 import { McpManager } from './tools/mcp.ts';
@@ -31,13 +35,14 @@ import { ToolRegistry } from './tools/registry.ts';
 import { timeTools } from './tools/time.ts';
 import type { ToolSource } from './tools/types.ts';
 import { webTools } from './tools/web.ts';
+import { workspaceTools } from './tools/workspace.ts';
 
 const log = createLogger('api');
 
 /** Builds every service. Tests pass their own provider registry to avoid the network. */
 export function createServices(
   repos: Repos,
-  options: { registry?: ProviderRegistry; mcp?: McpManager; toolSources?: ToolSource[] } = {},
+  options: { registry?: ProviderRegistry; mcp?: McpManager; toolSources?: ToolSource[]; workspaceDir?: string } = {},
 ): Services {
   const settings = new SettingsService(repos);
   const registry = options.registry ?? new ProviderRegistry(settings);
@@ -46,11 +51,21 @@ export function createServices(
   const attachments = new AttachmentService(repos);
   const search = new SearchService(repos);
   const mcp = options.mcp ?? new McpManager();
-  const tools = new ToolRegistry([webTools(), memoryTools(memory), codeTools(), timeTools(), libraryTools(repos, search), mcp, ...(options.toolSources ?? [])]);
+  const workspaces = new WorkspaceService(options.workspaceDir ?? config.workspaceDir, () => settings.get('workspace'));
+  const tools = new ToolRegistry([
+    webTools(),
+    memoryTools(memory),
+    codeTools(),
+    timeTools(),
+    libraryTools(repos, search),
+    workspaceTools(workspaces),
+    mcp,
+    ...(options.toolSources ?? []),
+  ]);
   const approvals = new ApprovalBroker();
-  const chat = new ChatService({ repos, settings, providers: registry, memory, tools, store, attachments, approvals });
+  const chat = new ChatService({ repos, settings, providers: registry, memory, tools, store, attachments, approvals, workspaces });
   const usage = new UsageService(repos, registry);
-  return { repos, settings, registry, memory, store, attachments, search, tools, mcp, approvals, chat, usage };
+  return { repos, settings, registry, memory, store, attachments, search, tools, mcp, approvals, chat, usage, workspaces };
 }
 
 export function createApi(services: Services): Hono {
@@ -64,6 +79,7 @@ export function createApi(services: Services): Hono {
   api.route('/', chatRoutes(services));
   api.route('/', memoryRoutes(services));
   api.route('/', attachmentRoutes(services));
+  api.route('/', workspaceRoutes(services));
   api.route('/', searchRoutes(services));
   api.route('/', dataRoutes(services));
   api.route('/', usageRoutes(services));
@@ -72,6 +88,7 @@ export function createApi(services: Services): Hono {
   api.onError((error, c) => {
     if (error instanceof HTTPException) return c.json({ error: error.message }, error.status);
     if (error instanceof AttachmentError) return c.json({ error: error.message }, 400);
+    if (error instanceof WorkspaceError || error instanceof ArchiveError) return c.json({ error: error.message }, 400);
     if (error instanceof NotFoundError) return c.json({ error: error.message }, 404);
     if (error instanceof UniqueConstraintError) return c.json({ error: error.message }, 409);
     if (error instanceof QueryError) return c.json({ error: error.message }, 400);
