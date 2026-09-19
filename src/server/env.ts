@@ -1,6 +1,13 @@
 import type { ProviderId } from '../shared/types.ts';
 
-// .env is loaded by Node itself (--env-file-if-exists), so this only reads process.env.
+// .env is loaded here rather than with --env-file-if-exists: on Windows, watch mode handles that flag by
+// watching the whole project folder, so every database write under data/ restarted the server in a loop.
+// Variables already set in the environment win over the file.
+try {
+  process.loadEnvFile();
+} catch (error) {
+  if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+}
 
 const KEY_VARS: Partial<Record<ProviderId, string>> = {
   openrouter: 'OPENROUTER_API_KEY',
