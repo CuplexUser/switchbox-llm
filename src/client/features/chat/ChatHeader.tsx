@@ -3,6 +3,7 @@ import CheckRoundedIcon from '@mui/icons-material/CheckRounded';
 import FolderOpenOutlinedIcon from '@mui/icons-material/FolderOpenOutlined';
 import FolderOutlinedIcon from '@mui/icons-material/FolderOutlined';
 import HistoryToggleOffRoundedIcon from '@mui/icons-material/HistoryToggleOffRounded';
+import LinkRoundedIcon from '@mui/icons-material/LinkRounded';
 import PsychologyAltOutlinedIcon from '@mui/icons-material/PsychologyAltOutlined';
 import PublicRoundedIcon from '@mui/icons-material/PublicRounded';
 import Box from '@mui/material/Box';
@@ -10,10 +11,15 @@ import Button from '@mui/material/Button';
 import ButtonBase from '@mui/material/ButtonBase';
 import IconButton from '@mui/material/IconButton';
 import InputBase from '@mui/material/InputBase';
+import Popover from '@mui/material/Popover';
+import Stack from '@mui/material/Stack';
+import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
-import { useState, type ReactNode } from 'react';
+import Typography from '@mui/material/Typography';
+import { useState, type MouseEvent, type ReactNode } from 'react';
 import { MAX_PANES } from '../../../shared/defaults.ts';
 import type { ConversationDetail } from '../../../shared/types.ts';
+import { ApiError } from '../../api/client.ts';
 import { useUpdateConversation, useWorkspaceFiles } from '../../api/hooks.ts';
 import { ChatActionsMenu } from './ChatActionsMenu.tsx';
 import { ToolsMenu } from './ToolsMenu.tsx';
@@ -95,7 +101,75 @@ function TitleField({ conversation }: { conversation: ConversationDetail }) {
   );
 }
 
-/** The workspace switch, and a button for its files once there is anything to see. */
+/** A popover for pointing this chat's workspace at a real folder on this computer, instead of its own hidden one. */
+function BindFolderButton({ data }: { data: ConversationDetail }) {
+  const updateConversation = useUpdateConversation();
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  const [value, setValue] = useState(data.hostFolderPath ?? '');
+  const [error, setError] = useState<string | null>(null);
+
+  function open(event: MouseEvent<HTMLElement>): void {
+    setValue(data.hostFolderPath ?? '');
+    setError(null);
+    setAnchor(event.currentTarget);
+  }
+
+  function save(): void {
+    updateConversation.mutate(
+      { id: data.id, hostFolderPath: value.trim() || null },
+      {
+        onSuccess: () => setAnchor(null),
+        onError: (mutationError) => setError(mutationError instanceof ApiError ? mutationError.message : 'Could not bind that folder.'),
+      },
+    );
+  }
+
+  return (
+    <>
+      <Tooltip title={data.hostFolderPath ? `Bound to a real folder: ${data.hostFolderPath}. Click to change.` : 'Bind this workspace to a real folder on this computer'}>
+        <IconButton size="small" onClick={open} aria-label="Bind workspace to a real folder" sx={{ width: 28, height: 28 }}>
+          <LinkRoundedIcon sx={{ fontSize: 16, color: data.hostFolderPath ? 'var(--sb-text)' : 'var(--sb-text-faint)' }} />
+        </IconButton>
+      </Tooltip>
+      <Popover open={Boolean(anchor)} anchorEl={anchor} onClose={() => setAnchor(null)} anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}>
+        <Stack spacing={1} sx={{ p: 2, width: 380 }}>
+          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+            Bind workspace to a real folder
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            Models will be able to create, edit and delete files in this real folder, instead of the chat’s own hidden storage.
+            Leave empty to use the chat’s own folder again.
+          </Typography>
+          <TextField
+            autoFocus
+            size="small"
+            placeholder="e.g. D:\Projects\my-app"
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
+            error={Boolean(error)}
+            helperText={error}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') save();
+              if (event.key === 'Escape') setAnchor(null);
+            }}
+          />
+          <Stack direction="row" spacing={1} sx={{ justifyContent: 'flex-end' }}>
+            {data.hostFolderPath && (
+              <Button size="small" onClick={() => updateConversation.mutate({ id: data.id, hostFolderPath: null }, { onSuccess: () => setAnchor(null) })}>
+                Unbind
+              </Button>
+            )}
+            <Button size="small" variant="contained" onClick={save}>
+              Save
+            </Button>
+          </Stack>
+        </Stack>
+      </Popover>
+    </>
+  );
+}
+
+/** The workspace switch, its bound-folder control, and a button for its files once there is anything to see. */
 function WorkspaceControls({ data, narrow }: { data: ConversationDetail; narrow: boolean }) {
   const updateConversation = useUpdateConversation();
   const listing = useWorkspaceFiles(data.id);
@@ -112,10 +186,13 @@ function WorkspaceControls({ data, narrow }: { data: ConversationDetail; narrow:
         label={narrow ? '' : data.workspace ? 'Files on' : 'Files off'}
         tooltip={
           data.workspace
-            ? 'Models can create, read and edit files in this chat’s workspace. Click to turn off; the files are kept.'
+            ? data.hostFolderPath
+              ? `Models can create, read and edit files in the real folder "${data.hostFolderPath}". Click to turn off; the files are kept.`
+              : 'Models can create, read and edit files in this chat’s workspace. Click to turn off; the files are kept.'
             : 'Give this chat a workspace folder that models can keep files in. Running commands is a separate tool in the Tools menu.'
         }
       />
+      {data.workspace && <BindFolderButton data={data} />}
       {showFiles && (
         <Tooltip title={count ? `Workspace: ${count} ${count === 1 ? 'file' : 'files'}` : 'Workspace files'}>
           <IconButton size="small" onClick={() => setOpen(true)} aria-label="Show workspace files" sx={{ width: 28, height: 28 }}>

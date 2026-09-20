@@ -300,6 +300,7 @@ describe('ChatService memory tools', () => {
     const activity: ActivityItem[] = [];
     const context = {
       conversationId: 'c',
+      hostFolderPath: null,
       paneId: 'p',
       settings: await settings.getAll(),
       web: { search: null, fetch: false, nativeSearch: false, resolved: 'none' as const, note: null },

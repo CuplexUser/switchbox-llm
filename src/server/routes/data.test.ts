@@ -77,6 +77,21 @@ describe('import', () => {
     const researcher = again.systemPrompts.find((prompt) => prompt.name === 'Researcher');
     expect(researcher).toMatchObject({ createdAt: old, updatedAt: old });
   });
+
+  it('never trusts a bound folder from an import, even a crafted one', async () => {
+    const source = freshApi();
+    const created = await source.request('http://localhost:8787/conversations', json({ panes: [{ provider: 'openrouter', model: 'a/model' }] }));
+    expect(created.status).toBe(201);
+
+    const bundle = (await exportArchive(source)).bundle;
+    for (const row of bundle.conversations) Object.assign(row, { hostFolderPath: 'C:\\Windows' });
+
+    const target = freshApi();
+    expect((await target.request('http://localhost:8787/data/import', json(bundle))).status).toBe(200);
+    const again = await exportArchive(target);
+    expect(again.bundle.conversations.length).toBeGreaterThan(0);
+    for (const row of again.bundle.conversations) expect(row.hostFolderPath).toBeNull();
+  });
 });
 
 describe('zip export', () => {

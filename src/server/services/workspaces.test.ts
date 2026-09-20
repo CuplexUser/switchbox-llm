@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,7 +9,7 @@ import type { LoopMessage } from '../providers/types.ts';
 import type { WebPlan } from '../tools/types.ts';
 import { commandEnvironment, runCommand } from './commands.ts';
 import { doneMessage, FakeProvider, seedConversation, send, setup, tempWorkspaceDir } from './testing.ts';
-import { cleanPath, WorkspaceError, WorkspaceService } from './workspaces.ts';
+import { assertBindableRoot, cleanPath, WorkspaceError, WorkspaceService } from './workspaces.ts';
 
 const CHAT = 'chat-1';
 
@@ -124,6 +125,81 @@ describe('workspace files', () => {
   });
 });
 
+describe('assertBindableRoot', () => {
+  it('accepts an existing absolute folder', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'switchbox-bindable-'));
+    expect(await assertBindableRoot(dir)).toBe(dir);
+  });
+
+  it('refuses a relative path, a missing folder and a file', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'switchbox-bindable-'));
+    const file = join(dir, 'file.txt');
+    writeFileSync(file, 'x');
+    await expect(assertBindableRoot('relative/path')).rejects.toThrow(WorkspaceError);
+    await expect(assertBindableRoot(join(dir, 'missing'))).rejects.toThrow(WorkspaceError);
+    await expect(assertBindableRoot(file)).rejects.toThrow(WorkspaceError);
+  });
+
+  it('refuses a whole drive root', async () => {
+    if (process.platform !== 'win32') return;
+    await expect(assertBindableRoot('C:\\')).rejects.toThrow('whole drive');
+  });
+});
+
+function bound(): string {
+  return mkdtempSync(join(tmpdir(), 'switchbox-bound-'));
+}
+
+describe('bound workspace root', () => {
+  it('reads and writes in the bound folder instead of the owned one', async () => {
+    const workspaces = service();
+    const root = bound();
+    await workspaces.write(CHAT, 'notes.md', 'hello', {}, root);
+    expect(readFileSync(join(root, 'notes.md'), 'utf8')).toBe('hello');
+    expect(existsSync(workspaces.dirFor(CHAT))).toBe(false);
+    expect((await workspaces.files(CHAT, '', root)).map((file) => file.path)).toEqual(['notes.md']);
+  });
+
+  it('still refuses escapes and links out of a bound folder', async () => {
+    const workspaces = service();
+    const root = bound();
+    await workspaces.write(CHAT, 'inside.txt', 'x', {}, root);
+    const outside = bound();
+    writeFileSync(join(outside, 'secret.txt'), 'secret');
+    symlinkSync(outside, join(root, 'link'), process.platform === 'win32' ? 'junction' : 'dir');
+
+    await expect(workspaces.read(CHAT, '../escape.txt', root)).rejects.toThrow(WorkspaceError);
+    await expect(workspaces.read(CHAT, 'link/secret.txt', root)).rejects.toThrow(WorkspaceError);
+  });
+
+  it('skips the total quota but keeps the per-file limit for a bound folder', async () => {
+    const workspaces = service({ maxFileMb: 1, quotaMb: 1 });
+    const root = bound();
+    await expect(workspaces.write(CHAT, 'big.bin', new Uint8Array(1024 * 1024 + 1), {}, root)).rejects.toThrow('limited to 1 MB');
+    // Two 1 MB files would be over the 1 MB quota for an owned folder, but this one is bound.
+    await workspaces.write(CHAT, 'one.bin', new Uint8Array(1024 * 1024), {}, root);
+    await workspaces.write(CHAT, 'two.bin', new Uint8Array(1024 * 1024), {}, root);
+  });
+
+  it('never deletes a bound folder when the chat is deleted, only the owned one', async () => {
+    const workspaces = service();
+    const root = bound();
+    await workspaces.write(CHAT, 'notes.md', 'hello', {}, root);
+    await workspaces.deleteFor(CHAT);
+    expect(existsSync(root)).toBe(true);
+    expect(readFileSync(join(root, 'notes.md'), 'utf8')).toBe('hello');
+  });
+
+  it('clear() empties a bound folder’s contents without removing the folder itself', async () => {
+    const workspaces = service();
+    const root = bound();
+    await workspaces.write(CHAT, 'notes.md', 'hello', {}, root);
+    await workspaces.clear(CHAT, root);
+    expect(existsSync(root)).toBe(true);
+    expect(await workspaces.files(CHAT, '', root)).toEqual([]);
+  });
+});
+
 function folder(): { cwd: string; tempDir: string } {
   const cwd = mkdtempSync(join(tmpdir(), 'switchbox-command-'));
   const tempDir = join(cwd, '.tmp');
@@ -182,6 +258,85 @@ describe('runCommand', () => {
     const result = await runCommand({ ...base, ...folder(), signal: controller.signal, command: 'node -e "setInterval(() => {}, 1000)"' });
     expect(result).toMatchObject({ stopped: true, exitCode: null });
   });
+});
+
+// Only runs on a machine with WSL2 and bubblewrap set up (`wsl -d <distro> -- sudo apt install -y bubblewrap`) —
+// not something CI or every dev machine has, so it's skipped rather than failed when unavailable.
+const sandboxReady =
+  spawnSync('wsl.exe', ['--status'], { stdio: 'ignore' }).status === 0 && spawnSync('wsl.exe', ['--', 'which', 'bwrap'], { stdio: 'ignore' }).status === 0;
+
+const sandbox = (allowNetwork: boolean) => ({ distro: '', allowNetwork });
+
+describe.runIf(sandboxReady)('runCommand sandboxed (live WSL + bwrap)', () => {
+  const base = { timeoutMs: 20_000, shell: 'system' as const, outputChars: 20_000 };
+
+  // A cold WSL session, plus other test files spawning wsl.exe at the same time, can be slower than vitest's default 5s.
+  const SANDBOX_TEST_TIMEOUT = 30_000;
+
+  it(
+    'reads and writes files in the bound workspace folder',
+    async () => {
+      const { cwd, tempDir } = folder();
+      const result = await runCommand({ ...base, cwd, tempDir, sandbox: sandbox(false), command: 'echo hello > out.txt && cat out.txt' });
+      expect(result).toMatchObject({ exitCode: 0 });
+      expect(result.stdout.trim()).toBe('hello');
+      expect(readFileSync(join(cwd, 'out.txt'), 'utf8').trim()).toBe('hello');
+    },
+    SANDBOX_TEST_TIMEOUT,
+  );
+
+  it(
+    'cannot read files outside the bound folder',
+    async () => {
+      const result = await runCommand({ ...base, ...folder(), sandbox: sandbox(false), command: 'cat /etc/passwd' });
+      expect(result.exitCode).not.toBe(0);
+    },
+    SANDBOX_TEST_TIMEOUT,
+  );
+
+  it(
+    'has no network by default, but reaches it when allowed',
+    async () => {
+      const command = 'python3 -c "import socket; socket.create_connection((\'1.1.1.1\', 80), timeout=5); print(\'reached\')"';
+      const blocked = await runCommand({ ...base, ...folder(), sandbox: sandbox(false), command });
+      expect(blocked.exitCode).not.toBe(0);
+      const allowed = await runCommand({ ...base, ...folder(), sandbox: sandbox(true), command });
+      expect(allowed.stdout.trim()).toBe('reached');
+    },
+    SANDBOX_TEST_TIMEOUT,
+  );
+
+  it(
+    'compiles and runs C code with the sandbox’s own toolchain',
+    async () => {
+      const { cwd, tempDir } = folder();
+      writeFileSync(join(cwd, 'hi.c'), '#include <stdio.h>\nint main(void){printf("hi from sandbox\\n");return 0;}');
+      const result = await runCommand({ ...base, cwd, tempDir, sandbox: sandbox(false), command: 'gcc hi.c -o hi && ./hi' });
+      expect(result).toMatchObject({ exitCode: 0 });
+      expect(result.stdout.trim()).toBe('hi from sandbox');
+    },
+    SANDBOX_TEST_TIMEOUT,
+  );
+
+  it(
+    'killing the process tears down everything inside the jail',
+    async () => {
+      const { cwd, tempDir } = folder();
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), 500);
+      const result = await runCommand({
+        ...base,
+        cwd,
+        tempDir,
+        sandbox: sandbox(false),
+        signal: controller.signal,
+        command: 'echo started > started.txt && sleep 30',
+      });
+      expect(result).toMatchObject({ stopped: true, exitCode: null });
+      expect(readFileSync(join(cwd, 'started.txt'), 'utf8').trim()).toBe('started');
+    },
+    SANDBOX_TEST_TIMEOUT,
+  );
 });
 
 const NO_WEB: WebPlan = { search: null, fetch: false, nativeSearch: false, resolved: 'none', note: null };

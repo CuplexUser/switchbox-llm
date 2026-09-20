@@ -15,6 +15,7 @@ import type { ConversationRow, PaneRow } from '../db/schemas.ts';
 import { DEFAULT_TITLE } from '../services/chat.ts';
 import { toMessage } from '../services/messages.ts';
 import { serialize } from '../services/serialize.ts';
+import { assertBindableRoot } from '../services/workspaces.ts';
 
 interface NewPane extends ModelRef {
   systemPromptId?: string | null;
@@ -31,6 +32,17 @@ function validateToolGroups(value: unknown): void {
   if (value === null || value === undefined) return;
   if (typeof value !== 'object' || Array.isArray(value) || Object.values(value).some((entry) => typeof entry !== 'boolean')) {
     throw badRequest('toolGroups must map group ids to true or false');
+  }
+}
+
+/** Checks a real folder a request wants to bind a workspace to, and returns the normalized path (or null to unbind). */
+async function validateHostFolderPath(value: unknown): Promise<string | null> {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string') throw badRequest('hostFolderPath must be a string or null');
+  try {
+    return await assertBindableRoot(value);
+  } catch (error) {
+    throw badRequest(error instanceof Error ? error.message : String(error));
   }
 }
 
@@ -93,6 +105,7 @@ export function conversationRoutes({ repos, settings, chat, store, attachments, 
     if (panes.length > MAX_PANES) throw badRequest(`At most ${MAX_PANES} panes per conversation`);
     panes.forEach(validateModel);
     validateToolGroups(body.toolGroups);
+    const hostFolderPath = await validateHostFolderPath(body.hostFolderPath);
 
     const [general, memory, web, promptId] = await Promise.all([
       settings.get('general'),
@@ -108,6 +121,7 @@ export function conversationRoutes({ repos, settings, chat, store, attachments, 
         useMemory: body.useMemory ?? memory.useByDefault,
         webAccess: body.webAccess ?? web.useByDefault,
         workspace: body.workspace === true,
+        hostFolderPath,
         toolGroups: body.toolGroups ?? null,
         pinned: false,
         archived: false,
@@ -126,9 +140,10 @@ export function conversationRoutes({ repos, settings, chat, store, attachments, 
     const body = await readJson<Partial<Conversation>>(c);
     validateToolGroups(body.toolGroups);
     if (body.workspace !== undefined && typeof body.workspace !== 'boolean') throw badRequest('workspace must be true or false');
+    if (body.hostFolderPath !== undefined) body.hostFolderPath = await validateHostFolderPath(body.hostFolderPath);
     const row = await repos.conversations.update(
       id,
-      pick(body, ['title', 'persist', 'useMemory', 'webAccess', 'workspace', 'toolGroups', 'pinned', 'archived']),
+      pick(body, ['title', 'persist', 'useMemory', 'webAccess', 'workspace', 'hostFolderPath', 'toolGroups', 'pinned', 'archived']),
     );
     // Saving a temporary chat writes what was said so far; making a chat temporary takes it out of the database.
     if (body.persist === true && !current.persist) await store.persist(id);
@@ -182,6 +197,9 @@ export function conversationRoutes({ repos, settings, chat, store, attachments, 
       useMemory: source.useMemory,
       webAccess: source.webAccess,
       workspace: source.workspace,
+      // Deliberately not source.hostFolderPath: a branch gets its own hidden folder rather than
+      // sharing a real folder with the chat it split from.
+      hostFolderPath: null,
       toolGroups: source.toolGroups,
       pinned: false,
       archived: false,

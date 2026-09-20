@@ -361,11 +361,20 @@ export function ToolsTab() {
       <SectionTitle description="Chats with Files on get a folder of their own that models can read and write. Turn on Run commands in a chat’s Tools menu to let models compile and run code there.">
         Workspaces
       </SectionTitle>
-      <Alert severity="warning" variant="outlined" sx={{ mb: 1.5 }}>
-        Commands run as ordinary programs on this computer, with your permissions. They start in the chat’s folder and can’t see
-        your API keys, but they are not isolated: a command can read or change any file you can. Keep Run a command on Ask unless you
-        trust the model with your machine.
-      </Alert>
+      {workspace.sandboxCommands ? (
+        <Alert severity="success" variant="outlined" sx={{ mb: 1.5 }}>
+          Commands run inside a WSL + bubblewrap jail that can only see the chat’s workspace folder, with no network access
+          unless allowed below. This needs <code>bubblewrap</code> installed in the WSL distro (run{' '}
+          <code>wsl -d {workspace.wslDistro || '<distro>'} -- sudo apt install -y bubblewrap</code> once); without it, run_command
+          refuses rather than running unsandboxed.
+        </Alert>
+      ) : (
+        <Alert severity="warning" variant="outlined" sx={{ mb: 1.5 }}>
+          Commands run as ordinary programs on this computer, with your permissions. They start in the chat’s folder and can’t see
+          your API keys, but they are not isolated: a command can read or change any file you can. Keep Run a command on Ask unless
+          you trust the model with your machine, or turn on Sandbox commands below.
+        </Alert>
+      )}
       <Panel>
         <SettingRow label="Storage per chat" description="Most a chat’s workspace may hold, in megabytes." htmlFor="workspace-quota">
           <TextField
@@ -436,6 +445,41 @@ export function ToolsTab() {
             ))}
           </TextField>
         </SettingRow>
+        <SettingRow
+          label="Sandbox commands (WSL)"
+          description="Run commands inside a WSL + bubblewrap jail that can only see the chat’s workspace folder, instead of directly on this computer."
+          htmlFor="workspace-sandbox"
+        >
+          <Switch
+            id="workspace-sandbox"
+            checked={workspace.sandboxCommands}
+            onChange={(event) => setWorkspace('sandboxCommands', event.target.checked)}
+          />
+        </SettingRow>
+        {workspace.sandboxCommands && (
+          <>
+            <SettingRow label="WSL distro" description="Which WSL distro to sandbox in. Empty means WSL’s default distro." htmlFor="workspace-wsl-distro">
+              <TextField
+                id="workspace-wsl-distro"
+                value={workspace.wslDistro}
+                onChange={(event) => setWorkspace('wslDistro', event.target.value)}
+                placeholder="default"
+                sx={{ width: 170 }}
+              />
+            </SettingRow>
+            <SettingRow
+              label="Network access by default"
+              description="Whether a sandboxed command can reach the network unless it asks not to (or asks to, if this is off)."
+              htmlFor="workspace-sandbox-network"
+            >
+              <Switch
+                id="workspace-sandbox-network"
+                checked={workspace.allowNetworkByDefault}
+                onChange={(event) => setWorkspace('allowNetworkByDefault', event.target.checked)}
+              />
+            </SettingRow>
+          </>
+        )}
         <SettingRow
           label="Command output kept"
           description="Characters of output and of errors a model gets back from each command. The start and the end are kept when there is more."

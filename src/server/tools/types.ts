@@ -34,6 +34,8 @@ export interface ToolEnvironment {
 
 export interface ToolRunContext {
   conversationId: string;
+  /** A real folder on this computer the chat's workspace is bound to, instead of its own hidden folder. */
+  hostFolderPath: string | null;
   paneId: string;
   settings: AppSettings;
   web: WebPlan;

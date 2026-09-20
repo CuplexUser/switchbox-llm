@@ -168,10 +168,12 @@ export class ChatService {
     const hasMemoryTools = offered.some((tool) => tool.group === 'memory');
     const facts = hasMemoryTools ? await memory.activeFacts({ query, profileId: pane.systemPromptId }) : [];
 
+    const hostFolderPath = conversation.hostFolderPath;
     const workspace = offered.some((tool) => tool.group === 'files')
       ? workspaceGuidance(
-          (await this.deps.workspaces.exists(conversation.id)) ? await this.deps.workspaces.files(conversation.id) : [],
+          (await this.deps.workspaces.exists(conversation.id, hostFolderPath)) ? await this.deps.workspaces.files(conversation.id, '', hostFolderPath) : [],
           offered.some((tool) => tool.group === 'commands'),
+          hostFolderPath,
         )
       : '';
 
@@ -471,6 +473,7 @@ export class ChatService {
         } else {
           const context: ToolRunContext = {
             conversationId: conversation.id,
+            hostFolderPath: conversation.hostFolderPath,
             paneId: pane.id,
             settings: assembled.settings,
             web,

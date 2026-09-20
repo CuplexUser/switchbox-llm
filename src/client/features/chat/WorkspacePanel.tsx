@@ -244,7 +244,18 @@ export function WorkspacePanel({ conversation, open, onClose }: { conversation: 
         sx={{ display: 'flex', flexDirection: 'column', height: '100%', outline: dragging ? '2px dashed var(--sb-ink)' : 'none', outlineOffset: -6 }}
       >
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 2, height: 52, borderBottom: '1px solid var(--sb-border)', flexShrink: 0 }}>
-          <Typography sx={{ fontWeight: 600, flex: 1 }}>Workspace</Typography>
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Typography sx={{ fontWeight: 600 }}>Workspace</Typography>
+            {conversation.hostFolderPath && (
+              <Typography
+                variant="caption"
+                sx={{ display: 'block', color: 'var(--sb-text-faint)', fontFamily: fonts.mono, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                title={conversation.hostFolderPath}
+              >
+                {conversation.hostFolderPath}
+              </Typography>
+            )}
+          </Box>
           <input ref={inputRef} type="file" multiple hidden onChange={(event) => void uploadAll(event.target.files).finally(() => (event.target.value = ''))} />
           <Button size="small" variant="outlined" startIcon={<UploadRoundedIcon />} onClick={() => inputRef.current?.click()} disabled={upload.isPending}>
             Upload
@@ -329,7 +340,9 @@ export function WorkspacePanel({ conversation, open, onClose }: { conversation: 
         title={confirm === null ? 'Delete the workspace?' : 'Delete this file?'}
         body={
           confirm === null
-            ? 'Every file in this chat’s workspace is deleted. The chat itself stays.'
+            ? conversation.hostFolderPath
+              ? `Every file in "${conversation.hostFolderPath}" is deleted from your computer. The chat itself stays.`
+              : 'Every file in this chat’s workspace is deleted. The chat itself stays.'
             : `${confirm ?? ''} is deleted from the workspace. This can’t be undone.`
         }
         confirmLabel="Delete"

@@ -125,6 +125,7 @@ describe('fetch helpers', () => {
       { id: '1', name: 'web_fetch', arguments: '{"url":"http://127.0.0.1:8787/api/settings"}' },
       {
         conversationId: 'c',
+        hostFolderPath: null,
         paneId: 'p',
         settings: DEFAULT_SETTINGS,
         web: { search: null, fetch: true, nativeSearch: false, resolved: 'none', note: null },
@@ -162,7 +163,7 @@ describe('addMissingColumns', () => {
       { table: 'conversations', schema: conversationSchema, defaults: { web_access: '1', workspace: '0' } },
       { table: 'messages', schema: messageSchema },
     ]);
-    expect(added).toEqual(['conversations.web_access', 'conversations.workspace', 'conversations.tool_groups']);
+    expect(added).toEqual(['conversations.web_access', 'conversations.workspace', 'conversations.host_folder_path', 'conversations.tool_groups']);
 
     const check = new DatabaseSync(file);
     expect(check.prepare('SELECT web_access FROM conversations').get()).toEqual({ web_access: 1 });

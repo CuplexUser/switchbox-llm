@@ -132,19 +132,34 @@ button or drag and drop, download one file or all of them as a ZIP archive, and 
 
 - **Paths:** every path is checked to stay inside the chat's folder. Absolute paths, `..`, Windows device names
   and alternate data streams are refused, and so are symbolic links or junctions that lead out of it
-- **Limits:** 100 MB per chat and 20 MB per file by default, under Settings → Tools → Workspaces
+- **Limits:** 100 MB per chat and 20 MB per file by default, under Settings → Tools → Workspaces. A folder bound
+  as below (see next) is exempt from the total limit, since it's your own disk rather than chat storage, but the
+  per-file limit still applies
 - **Lifecycle:** turning Files off keeps the files. Branching a chat copies them, and deleting a chat deletes
   them. Temporary chats lose theirs on restart, like their messages
 - **Serving:** the panel serves files as images or plain text, sandboxed and never sniffed, so an HTML or SVG
   file a model wrote can't run scripts in the app
 
-**Run commands** is a separate tool group, off in new chats and turned on in a chat's Tools menu. It only works
-while Files is on. `run_command` starts the system shell (cmd.exe on Windows, `/bin/sh` elsewhere; PowerShell
-or bash can be chosen) in the workspace folder, so models can use whatever compilers and runtimes you have
-installed. The tool's description tells the model which common ones are on the PATH.
+**Binding to a real folder:** the link icon next to the Files switch points a chat's workspace at an existing
+folder on this computer (paste its full path) instead of the chat's own hidden folder — useful for letting a
+model work directly in a project directory. The same path checks above still apply, rooted at that folder. A
+few things to know:
 
-Commands are **not sandboxed**. They run as ordinary programs with your user account, and an approved command
-can read or change any file you can. What Switchbox does:
+- Deleting the chat never deletes the bound folder or anything in it, only the chat's own (empty, unused)
+  hidden folder — the two are never the same folder. The Files panel's "Delete the workspace" button does
+  empty the bound folder's contents, since that's an explicit action on it, not a side effect of chat deletion
+- Branching a chat does **not** carry the binding over; the branch gets its own hidden folder, so two chats
+  never end up writing into the same real folder implicitly
+- The workspace usage figure shown in the Files panel is informational for a bound folder; it isn't enforced
+
+**Run commands** is a separate tool group, off in new chats and turned on in a chat's Tools menu. It only works
+while Files is on. `run_command` starts a shell in the workspace folder (or the bound folder, if any), so models
+can use whatever compilers and runtimes you have installed. The tool's description tells the model which common
+ones it can see.
+
+By default, commands are **not sandboxed**: `run_command` runs the system shell (cmd.exe on Windows, `/bin/sh`
+elsewhere; PowerShell or bash can be chosen) as an ordinary program with your user account, and an approved
+command can read or change any file you can. What Switchbox does regardless of sandboxing:
 
 - `run_command` defaults to Ask, and the approval card shows the command line itself
 - API keys and other variables from `.env` are left out of a command's environment. Only what shells and
@@ -154,7 +169,24 @@ can read or change any file you can. What Switchbox does:
 - output is capped at 20,000 characters per stream, keeping the start and the end
 - an import never changes the Run commands policy
 
-For real isolation, run Switchbox itself inside a container or VM.
+**Sandbox commands**, under Settings → Tools → Workspaces, runs each command inside a
+[bubblewrap](https://github.com/containers/bubblewrap) jail in WSL2 instead, on Windows with WSL installed. The
+jail sees only the workspace (or bound) folder plus a minimal read-only system (`/usr`, `/bin`, `/lib`), gets a
+fresh `/proc`, `/dev` and `/tmp`, and has no network access unless "Network access by default" is on or the
+model's call asks for it (subject to approval, like any other command). This needs `bubblewrap` installed once
+in the WSL distro:
+
+```bash
+wsl -d <distro> -- sudo apt install -y bubblewrap
+```
+
+Toolchain detection then looks inside that WSL distro instead of the Windows PATH, so `run_command`'s
+description only lists what's actually installed there (`build-essential` for C/C++, `python3-full` for
+Python, and so on — install what you need with `apt`). If sandboxing is on but bubblewrap isn't found,
+`run_command` refuses with the install command above rather than silently running unsandboxed.
+
+Without WSL (macOS, Linux, or Windows without WSL) or with sandboxing off, run Switchbox itself inside a
+container or VM for real isolation.
 
 ### MCP servers
 
@@ -289,7 +321,10 @@ Settings → Data exports everything except API keys as a ZIP archive. The rows,
 `workspaces/<chat id>/`. Files keep their raw bytes instead of becoming base64 text, and already-compressed
 formats are stored as they are. Imports take these archives and the JSON files earlier versions exported.
 Imported chats, profiles and memories keep their original dates, workspace files already present are left alone,
-and archive entries go through the same path checks as the workspace tools.
+and archive entries go through the same path checks as the workspace tools. Like MCP servers (which start
+switched off) and Run commands' approval policy (which keeps this machine's, never the import's), a chat's
+bound folder is never trusted from an import — it's cleared, since it never went through the folder checks
+described under [Workspaces](#workspaces) and could point anywhere on this machine.
 
 ## Roadmap
 

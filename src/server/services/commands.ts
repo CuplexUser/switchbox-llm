@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import type { WorkspaceShell } from '../../shared/types.ts';
+import { buildSandboxArgs, TOOLCHAINS } from './sandbox.ts';
 
 export interface CommandResult {
   /** Null when the process was killed. */
@@ -23,6 +24,8 @@ export interface CommandOptions {
   /** Characters of each stream to keep; the start and end are kept when there is more. */
   outputChars: number;
   signal?: AbortSignal;
+  /** Run inside a WSL + bubblewrap jail that can only see the workspace folder, instead of directly on this machine. */
+  sandbox?: { distro: string; allowNetwork: boolean } | null;
 }
 
 const IS_WINDOWS = process.platform === 'win32';
@@ -114,6 +117,18 @@ export function platformName(): string {
 }
 
 function start(options: CommandOptions): ChildProcess {
+  if (options.sandbox) {
+    const built = buildSandboxArgs({
+      command: options.command,
+      cwd: options.cwd,
+      tempDir: options.tempDir,
+      distro: options.sandbox.distro,
+      allowNetwork: options.sandbox.allowNetwork,
+    });
+    if ('error' in built) throw new Error(built.error);
+    // The jail sets its own environment and cwd; nothing from this process should leak in.
+    return spawn('wsl.exe', built.wslArgs, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  }
   const common = {
     cwd: options.cwd,
     env: commandEnvironment(options.tempDir),
@@ -235,7 +250,6 @@ export function runCommand(options: CommandOptions): Promise<CommandResult> {
   });
 }
 
-const TOOLCHAINS = ['node', 'python', 'python3', 'gcc', 'g++', 'clang', 'cl', 'dotnet', 'java', 'javac', 'go', 'rustc', 'cargo', 'make', 'cmake', 'git'];
 let detected: Promise<string[]> | null = null;
 
 /** Which common compilers and runtimes are on the PATH, looked up once. */

@@ -29,7 +29,7 @@ const STORED_DATES: Record<string, string[]> = {
 
 /** Fields added after the first export format, filled in for older bundles. */
 const LATER_FIELDS: Record<string, Record<string, unknown>> = {
-  conversations: { toolGroups: null, workspace: false },
+  conversations: { toolGroups: null, workspace: false, hostFolderPath: null },
   messages: { attachments: null, trace: null, preferred: null },
   systemPrompts: { tools: null, maxToolRounds: null, params: null },
   memories: { scope: null },
@@ -134,7 +134,9 @@ export function dataRoutes({ repos, settings, usage, store, workspaces }: Servic
 
     const imported = {
       // The undated repos store createdAt and updatedAt as given, so imported chats keep their dates.
-      conversations: await insert(repos.undated.conversations, bundle.conversations, 'conversations'),
+      // A bound folder is never trusted from an import: it never went through assertBindableRoot, and a
+      // path from another machine (or a crafted export) could point anywhere on this one.
+      conversations: await insert(repos.undated.conversations, bundle.conversations, 'conversations', (row) => ({ ...row, hostFolderPath: null })),
       panes: await insert(repos.undated.panes, bundle.panes, 'panes'),
       messages: await insert(repos.messages, bundle.messages, 'messages'),
       systemPrompts: await insert(repos.undated.systemPrompts, bundle.systemPrompts, 'systemPrompts'),

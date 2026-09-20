@@ -1,5 +1,5 @@
 import { appendFile, cp, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
 import type { WorkspaceFile, WorkspaceListing, WorkspaceSettings } from '../../shared/types.ts';
 
 /** A request the workspace refuses, such as a path outside it or a file over the limit. Shown to the model or the user as is. */
@@ -58,6 +58,28 @@ export function cleanPath(path: string): string {
   return segments.join('/');
 }
 
+/**
+ * Checks a real folder a user wants to bind a chat's workspace to: it must be an absolute path to
+ * a folder that already exists, and not a whole drive or the Windows folder. This is a sanity check
+ * against the worst mistakes, not a security boundary — run_command can already reach anywhere the
+ * user's own account can, at the same trust level as approving a command.
+ */
+export async function assertBindableRoot(path: string): Promise<string> {
+  const trimmed = path.trim();
+  if (!trimmed || !isAbsolute(trimmed)) throw new WorkspaceError(`"${path}" is not an absolute folder path.`);
+  const full = resolve(trimmed);
+  const info = await stat(full).catch(() => null);
+  if (!info) throw new WorkspaceError(`"${path}" does not exist.`);
+  if (!info.isDirectory()) throw new WorkspaceError(`"${path}" is not a folder.`);
+  const sensitive = [parse(full).root, process.env.WINDIR, process.env.SystemRoot]
+    .filter((value): value is string => Boolean(value))
+    .map((value) => resolve(value).toLowerCase());
+  if (sensitive.includes(full.toLowerCase())) {
+    throw new WorkspaceError(`"${path}" is a whole drive or a system folder; pick a folder inside it instead.`);
+  }
+  return full;
+}
+
 function within(parent: string, child: string): boolean {
   return child === parent || child.startsWith(parent.endsWith(sep) ? parent : parent + sep);
 }
@@ -85,27 +107,38 @@ export class WorkspaceService {
     this.limits = limits;
   }
 
+  /** The folder Switchbox itself owns for this chat. Always safe to delete: never the folder a chat's workspace is bound to. */
   dirFor(conversationId: string): string {
     if (!ID_PATTERN.test(conversationId)) throw new WorkspaceError('Not a valid chat id.');
     return join(this.root, conversationId);
   }
 
-  async exists(conversationId: string): Promise<boolean> {
-    return exists(this.dirFor(conversationId));
+  /** The folder a chat's workspace actually reads and writes: its bound folder if it has one, otherwise its owned folder. */
+  private effectiveDir(conversationId: string, hostFolderPath: string | null): string {
+    return hostFolderPath ? resolve(hostFolderPath) : this.dirFor(conversationId);
+  }
+
+  async exists(conversationId: string, hostFolderPath: string | null = null): Promise<boolean> {
+    return exists(this.effectiveDir(conversationId, hostFolderPath));
   }
 
   /** Makes the folder and its scratch folder, and returns the folder. */
-  async ensure(conversationId: string): Promise<string> {
-    const dir = this.dirFor(conversationId);
+  async ensure(conversationId: string, hostFolderPath: string | null = null): Promise<string> {
+    const dir = this.effectiveDir(conversationId, hostFolderPath);
     await mkdir(join(dir, TEMP_FOLDER), { recursive: true });
     return dir;
   }
 
   /** The absolute path for a relative one, after checking it stays inside the chat's folder. */
-  async resolve(conversationId: string, path: string, options: { allowRoot?: boolean } = {}): Promise<{ full: string; path: string }> {
+  async resolve(
+    conversationId: string,
+    path: string,
+    options: { allowRoot?: boolean } = {},
+    hostFolderPath: string | null = null,
+  ): Promise<{ full: string; path: string }> {
     const clean = cleanPath(path);
     if (!clean && !options.allowRoot) throw new WorkspaceError('A file path is required.');
-    const dir = this.dirFor(conversationId);
+    const dir = this.effectiveDir(conversationId, hostFolderPath);
     const full = clean ? join(dir, ...clean.split('/')) : dir;
     if (!within(dir, full)) throw new WorkspaceError(`"${path}" leaves the workspace.`);
     // A link inside the folder could point anywhere, so the nearest part that exists must resolve inside it.
@@ -144,17 +177,17 @@ export class WorkspaceService {
   }
 
   /** Files under `folder` (the whole workspace by default), without the scratch folder. */
-  async files(conversationId: string, folder = ''): Promise<WorkspaceFile[]> {
-    const { full, path } = await this.resolve(conversationId, folder, { allowRoot: true });
+  async files(conversationId: string, folder = '', hostFolderPath: string | null = null): Promise<WorkspaceFile[]> {
+    const { full, path } = await this.resolve(conversationId, folder, { allowRoot: true }, hostFolderPath);
     const files: WorkspaceFile[] = [];
     await this.walk(full, path, files, false);
     return files;
   }
 
   /** Bytes used by the whole folder, scratch files included. */
-  async usage(conversationId: string): Promise<number> {
+  async usage(conversationId: string, hostFolderPath: string | null = null): Promise<number> {
     const files: WorkspaceFile[] = [];
-    await this.walk(this.dirFor(conversationId), '', files, true);
+    await this.walk(this.effectiveDir(conversationId, hostFolderPath), '', files, true);
     return files.reduce((total, file) => total + file.size, 0);
   }
 
@@ -162,26 +195,26 @@ export class WorkspaceService {
     return (await this.limits()).quotaMb * MB;
   }
 
-  async listing(conversationId: string): Promise<WorkspaceListing> {
-    const present = await this.exists(conversationId);
+  async listing(conversationId: string, hostFolderPath: string | null = null): Promise<WorkspaceListing> {
+    const present = await this.exists(conversationId, hostFolderPath);
     return {
-      files: present ? await this.files(conversationId) : [],
-      usage: present ? await this.usage(conversationId) : 0,
+      files: present ? await this.files(conversationId, '', hostFolderPath) : [],
+      usage: present ? await this.usage(conversationId, hostFolderPath) : 0,
       quota: await this.quota(),
       exists: present,
     };
   }
 
-  async readBytes(conversationId: string, path: string): Promise<{ path: string; data: Buffer }> {
-    const target = await this.resolve(conversationId, path);
+  async readBytes(conversationId: string, path: string, hostFolderPath: string | null = null): Promise<{ path: string; data: Buffer }> {
+    const target = await this.resolve(conversationId, path, {}, hostFolderPath);
     const info = await stat(target.full).catch(() => null);
     if (!info) throw new WorkspaceError(`There is no file "${target.path}".`);
     if (info.isDirectory()) throw new WorkspaceError(`"${target.path}" is a folder.`);
     return { path: target.path, data: await readFile(target.full) };
   }
 
-  async read(conversationId: string, path: string): Promise<ReadResult> {
-    const { path: clean, data } = await this.readBytes(conversationId, path);
+  async read(conversationId: string, path: string, hostFolderPath: string | null = null): Promise<ReadResult> {
+    const { path: clean, data } = await this.readBytes(conversationId, path, hostFolderPath);
     return { path: clean, size: data.byteLength, text: isText(data) ? data.toString('utf8') : null };
   }
 
@@ -194,8 +227,9 @@ export class WorkspaceService {
     path: string,
     content: string | Uint8Array,
     options: { append?: boolean; overwrite?: boolean } = {},
+    hostFolderPath: string | null = null,
   ): Promise<{ path: string; bytes: number; created: boolean; written: boolean }> {
-    const target = await this.resolve(conversationId, path);
+    const target = await this.resolve(conversationId, path, {}, hostFolderPath);
     const bytes = typeof content === 'string' ? Buffer.from(content, 'utf8') : content;
     const limits = await this.limits();
     const existing = await stat(target.full).catch(() => null);
@@ -206,15 +240,18 @@ export class WorkspaceService {
     if (finalSize > limits.maxFileMb * MB) {
       throw new WorkspaceError(`"${target.path}" would be ${(finalSize / MB).toFixed(1)} MB; files are limited to ${limits.maxFileMb} MB.`);
     }
-    const used = (await this.exists(conversationId)) ? await this.usage(conversationId) : 0;
-    const after = used - (existing?.size ?? 0) + finalSize;
-    if (after > limits.quotaMb * MB) {
-      throw new WorkspaceError(
-        `The workspace would hold ${(after / MB).toFixed(1)} MB, over its ${limits.quotaMb} MB limit. Delete files that are no longer needed first.`,
-      );
+    // A bound folder is the user's own disk, not chat storage counted against a quota.
+    if (!hostFolderPath) {
+      const used = (await this.exists(conversationId)) ? await this.usage(conversationId) : 0;
+      const after = used - (existing?.size ?? 0) + finalSize;
+      if (after > limits.quotaMb * MB) {
+        throw new WorkspaceError(
+          `The workspace would hold ${(after / MB).toFixed(1)} MB, over its ${limits.quotaMb} MB limit. Delete files that are no longer needed first.`,
+        );
+      }
     }
 
-    await this.ensure(conversationId);
+    await this.ensure(conversationId, hostFolderPath);
     await mkdir(dirname(target.full), { recursive: true });
     if (options.append) await appendFile(target.full, bytes);
     else await writeFile(target.full, bytes);
@@ -222,9 +259,16 @@ export class WorkspaceService {
   }
 
   /** Replaces exact text. Refuses when the text is missing, or appears more than once without `replaceAll`. */
-  async edit(conversationId: string, path: string, oldText: string, newText: string, replaceAll = false): Promise<{ path: string; replacements: number }> {
+  async edit(
+    conversationId: string,
+    path: string,
+    oldText: string,
+    newText: string,
+    replaceAll = false,
+    hostFolderPath: string | null = null,
+  ): Promise<{ path: string; replacements: number }> {
     if (!oldText) throw new WorkspaceError('old_text must not be empty.');
-    const file = await this.read(conversationId, path);
+    const file = await this.read(conversationId, path, hostFolderPath);
     if (file.text === null) throw new WorkspaceError(`"${file.path}" is not a text file.`);
     const count = file.text.split(oldText).length - 1;
     if (count === 0) throw new WorkspaceError(`The text to replace was not found in "${file.path}". Read the file again and copy the text exactly.`);
@@ -232,22 +276,30 @@ export class WorkspaceService {
       throw new WorkspaceError(`The text appears ${count} times in "${file.path}". Include more surrounding lines, or set replace_all.`);
     }
     const updated = replaceAll ? file.text.replaceAll(oldText, () => newText) : file.text.replace(oldText, () => newText);
-    await this.write(conversationId, file.path, updated);
+    await this.write(conversationId, file.path, updated, {}, hostFolderPath);
     return { path: file.path, replacements: replaceAll ? count : 1 };
   }
 
   /** Deletes a file or a folder with everything in it. */
-  async remove(conversationId: string, path: string): Promise<{ path: string; folder: boolean }> {
-    const target = await this.resolve(conversationId, path);
+  async remove(conversationId: string, path: string, hostFolderPath: string | null = null): Promise<{ path: string; folder: boolean }> {
+    const target = await this.resolve(conversationId, path, {}, hostFolderPath);
     const info = await lstat(target.full).catch(() => null);
     if (!info) throw new WorkspaceError(`There is no file or folder "${target.path}".`);
     await rm(target.full, { recursive: true, force: true });
     return { path: target.path, folder: info.isDirectory() };
   }
 
-  async move(conversationId: string, from: string, to: string): Promise<{ from: string; to: string }> {
-    const source = await this.resolve(conversationId, from);
-    const destination = await this.resolve(conversationId, to);
+  /** Empties a chat's workspace of its contents without removing the folder itself — safe for a bound folder too. */
+  async clear(conversationId: string, hostFolderPath: string | null = null): Promise<void> {
+    const dir = this.effectiveDir(conversationId, hostFolderPath);
+    if (!(await exists(dir))) return;
+    const entries = await readdir(dir);
+    await Promise.all(entries.map((entry) => rm(join(dir, entry), { recursive: true, force: true })));
+  }
+
+  async move(conversationId: string, from: string, to: string, hostFolderPath: string | null = null): Promise<{ from: string; to: string }> {
+    const source = await this.resolve(conversationId, from, {}, hostFolderPath);
+    const destination = await this.resolve(conversationId, to, {}, hostFolderPath);
     if (!(await exists(source.full))) throw new WorkspaceError(`There is no file or folder "${source.path}".`);
     if (await exists(destination.full)) throw new WorkspaceError(`"${destination.path}" already exists.`);
     if (within(source.full, destination.full)) throw new WorkspaceError('A folder cannot be moved into itself.');
@@ -257,12 +309,18 @@ export class WorkspaceService {
   }
 
   /** Lines containing `query`, ignoring case, in text files under `folder`. */
-  async search(conversationId: string, query: string, folder = '', limit = 100): Promise<{ matches: SearchMatch[]; truncated: boolean }> {
+  async search(
+    conversationId: string,
+    query: string,
+    folder = '',
+    limit = 100,
+    hostFolderPath: string | null = null,
+  ): Promise<{ matches: SearchMatch[]; truncated: boolean }> {
     const needle = query.toLowerCase();
     const matches: SearchMatch[] = [];
-    for (const file of await this.files(conversationId, folder)) {
+    for (const file of await this.files(conversationId, folder, hostFolderPath)) {
       if (file.size > 2 * MB) continue;
-      const { data } = await this.readBytes(conversationId, file.path);
+      const { data } = await this.readBytes(conversationId, file.path, hostFolderPath);
       if (!isText(data)) continue;
       const lines = data.toString('utf8').split(/\r?\n/);
       for (let index = 0; index < lines.length; index++) {
@@ -276,8 +334,8 @@ export class WorkspaceService {
   }
 
   /** Size and modified time of every file, for telling what a command changed. */
-  async snapshot(conversationId: string): Promise<Map<string, string>> {
-    const files = (await this.exists(conversationId)) ? await this.files(conversationId) : [];
+  async snapshot(conversationId: string, hostFolderPath: string | null = null): Promise<Map<string, string>> {
+    const files = (await this.exists(conversationId, hostFolderPath)) ? await this.files(conversationId, '', hostFolderPath) : [];
     return new Map(files.map((file) => [file.path, `${file.size}:${file.modifiedAt}`]));
   }
 

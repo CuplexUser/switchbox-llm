@@ -107,5 +107,12 @@ _server done_ have their API and tests in place and are waiting for their UI.
       files. The list reloads as tools change them.
 - [x] **F4. ZIP exports** (M). Exports are ZIP archives with the rows in `switchbox.json` and attachments and
       workspace files as raw entries. Imports check each entry path, cap the unpacked size and still accept version 1 JSON.
-- [ ] **F5. Isolated commands** (L). An optional Docker or WSL backend for `run_command`, with the workspace
-      mounted and no network by default.
+- [x] **F5. Isolated commands** (L). `run_command` can run inside a WSL2 + bubblewrap jail instead (Settings →
+      Tools → Workspaces → Sandbox commands; Docker Desktop isn't required). The jail sees only the workspace
+      folder and a minimal read-only system, with no network unless allowed by default or per call. Toolchain
+      detection runs inside the WSL distro rather than the Windows PATH when sandboxing is on, so the tool's
+      description reflects what's actually installed there.
+- [x] **F6. Bindable workspace root** (M). A chat's workspace can point at a real folder on this computer
+      (the link icon next to Files) instead of only its own hidden folder, through the same path checks. A
+      bound folder is exempt from the total quota, is never deleted when the chat is (only the chat's own
+      unused folder is), isn't inherited by branches, and is never trusted from an import.

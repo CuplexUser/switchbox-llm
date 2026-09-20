@@ -63,6 +63,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
     maxCommandTimeoutSeconds: 600,
     shell: 'system',
     outputChars: 20_000,
+    sandboxCommands: false,
+    wslDistro: '',
+    allowNetworkByDefault: false,
   },
 };
 

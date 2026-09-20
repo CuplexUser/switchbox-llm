@@ -140,6 +140,12 @@ export interface WorkspaceSettings {
   shell: WorkspaceShell;
   /** Characters of stdout and of stderr returned to the model. */
   outputChars: number;
+  /** Run commands in a WSL + bubblewrap jail instead of directly on this machine. */
+  sandboxCommands: boolean;
+  /** The WSL distro to sandbox in. Empty means WSL's default distro. */
+  wslDistro: string;
+  /** Whether a sandboxed command can reach the network unless it asks not to. */
+  allowNetworkByDefault: boolean;
 }
 
 export type SettingsSection = keyof AppSettings;
@@ -173,6 +179,8 @@ export interface Conversation {
   webAccess: boolean;
   /** The chat has a file workspace its models can read and write. Off until turned on. */
   workspace: boolean;
+  /** A real folder on this computer the workspace is bound to, instead of the chat's own hidden folder. */
+  hostFolderPath: string | null;
   /** Per-chat on/off for optional tool groups such as "code" or "mcp:<server id>". Missing groups use their default. */
   toolGroups: Record<string, boolean> | null;
   pinned: boolean;
