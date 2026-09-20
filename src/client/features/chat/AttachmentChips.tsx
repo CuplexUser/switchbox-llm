@@ -1,5 +1,6 @@
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
 import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined';
+import DownloadRoundedIcon from '@mui/icons-material/DownloadRounded';
 import ErrorOutlineRoundedIcon from '@mui/icons-material/ErrorOutlineRounded';
 import PictureAsPdfOutlinedIcon from '@mui/icons-material/PictureAsPdfOutlined';
 import Box from '@mui/material/Box';
@@ -7,7 +8,7 @@ import CircularProgress from '@mui/material/CircularProgress';
 import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
-import type { AttachmentKind } from '../../../shared/types.ts';
+import type { AttachmentKind, AttachmentRef } from '../../../shared/types.ts';
 import { attachmentUrl, formatBytes } from '../../lib/files.ts';
 
 export interface ChipItem {
@@ -86,6 +87,56 @@ export function AttachmentChips({ items, onRemove }: { items: ChipItem[]; onRemo
           chip
         );
       })}
+    </Box>
+  );
+}
+
+/** Images a model generated, shown at a real viewing size rather than as a small chip. */
+export function GeneratedImages({ attachments }: { attachments: AttachmentRef[] }) {
+  const images = attachments.filter((ref) => ref.kind === 'image');
+  if (images.length === 0) return null;
+  return (
+    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 1.25 }}>
+      {images.map((ref) => (
+        <Box key={ref.id} sx={{ position: 'relative', '&:hover .sb-download': { opacity: 1 } }}>
+          <Box
+            component="a"
+            href={attachmentUrl(ref.id)}
+            target="_blank"
+            rel="noreferrer"
+            sx={{ display: 'block', lineHeight: 0 }}
+          >
+            <Box
+              component="img"
+              src={attachmentUrl(ref.id)}
+              alt={ref.name}
+              sx={{ maxWidth: 320, maxHeight: 320, width: 'auto', height: 'auto', borderRadius: '10px', border: '1px solid var(--sb-border)' }}
+            />
+          </Box>
+          <Tooltip title="Download">
+            <IconButton
+              className="sb-download"
+              component="a"
+              href={attachmentUrl(ref.id)}
+              download={ref.name}
+              aria-label={`Download ${ref.name}`}
+              size="small"
+              sx={{
+                position: 'absolute',
+                top: 6,
+                right: 6,
+                opacity: { xs: 1, md: 0 },
+                transition: 'opacity 120ms ease',
+                backgroundColor: 'var(--sb-surface)',
+                border: '1px solid var(--sb-border)',
+                '&:hover': { backgroundColor: 'var(--sb-surface)' },
+              }}
+            >
+              <DownloadRoundedIcon sx={{ fontSize: 16 }} />
+            </IconButton>
+          </Tooltip>
+        </Box>
+      ))}
     </Box>
   );
 }

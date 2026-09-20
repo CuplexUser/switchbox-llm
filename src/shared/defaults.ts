@@ -26,6 +26,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     openrouter: { enabled: true, baseUrl: 'https://openrouter.ai/api/v1' },
     openai: { enabled: true, baseUrl: 'https://api.openai.com/v1' },
     anthropic: { enabled: true, baseUrl: 'https://api.anthropic.com/v1' },
+    google: { enabled: false, baseUrl: 'https://generativelanguage.googleapis.com/v1beta' },
     ollama: { enabled: false, baseUrl: 'http://localhost:11434/v1' },
     lmstudio: { enabled: false, baseUrl: 'http://localhost:1234/v1' },
     custom: { enabled: false, baseUrl: '' },

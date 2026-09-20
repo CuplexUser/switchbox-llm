@@ -6,6 +6,7 @@ const GLYPHS: Record<ProviderId, string> = {
   openrouter: 'OR',
   openai: 'OA',
   anthropic: 'An',
+  google: 'Gg',
   ollama: 'Ol',
   lmstudio: 'LM',
   custom: 'Cu',

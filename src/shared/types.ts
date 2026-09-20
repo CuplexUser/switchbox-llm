@@ -1,10 +1,11 @@
-export const PROVIDER_IDS = ['openrouter', 'openai', 'anthropic', 'ollama', 'lmstudio', 'custom'] as const;
+export const PROVIDER_IDS = ['openrouter', 'openai', 'anthropic', 'google', 'ollama', 'lmstudio', 'custom'] as const;
 export type ProviderId = (typeof PROVIDER_IDS)[number];
 
 export const PROVIDER_LABELS: Record<ProviderId, string> = {
   openrouter: 'OpenRouter',
   openai: 'OpenAI',
   anthropic: 'Anthropic',
+  google: 'Google',
   ollama: 'Ollama',
   lmstudio: 'LM Studio',
   custom: 'Custom endpoint',
@@ -20,6 +21,8 @@ export interface ModelInfo extends ModelRef {
   contextLength?: number;
   /** USD per million tokens. */
   pricing?: { input: number; output: number };
+  /** Image-generation models answer with an image attachment instead of streamed text. */
+  kind?: 'image';
 }
 
 /** How hard a reasoning model thinks. Providers that offer fewer levels get the nearest one. */

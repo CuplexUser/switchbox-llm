@@ -18,6 +18,7 @@ const KEY_VARS: Partial<Record<ProviderId, string>> = {
   openrouter: 'OPENROUTER_API_KEY',
   openai: 'OPENAI_API_KEY',
   anthropic: 'ANTHROPIC_API_KEY',
+  google: 'GEMINI_API_KEY',
   custom: 'CUSTOM_API_KEY',
 };
 
@@ -25,6 +26,7 @@ const DESCRIPTIONS: Record<ProviderId, string> = {
   openrouter: 'Hundreds of models from many vendors through one key, with per-request pricing.',
   openai: 'GPT models directly from OpenAI.',
   anthropic: 'Claude models directly from Anthropic.',
+  google: 'Nano Banana and other Gemini image models directly from Google.',
   ollama: 'Models running locally with Ollama. No key needed.',
   lmstudio: 'Models served by LM Studio’s local server. No key needed.',
   custom: 'Any server that speaks the OpenAI Chat Completions API, such as vLLM or llama.cpp.',

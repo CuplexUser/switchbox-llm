@@ -9,6 +9,7 @@ import {
   webSearchToolFor,
   type AnthropicEvent,
 } from './anthropic.ts';
+import { GoogleProvider } from './google.ts';
 import { mapModels, mapOpenAiChunk, OpenAiCompatibleProvider, reasoningFields, toOpenAiMessages } from './openaiCompatible.ts';
 import { providerFetch, retryDelay, type ChatEvent, type ChatRequest, type LoopMessage } from './types.ts';
 
@@ -163,6 +164,85 @@ describe('OpenAI-compatible provider', () => {
     const provider = new OpenAiCompatibleProvider({ id: 'openrouter', baseUrl: 'https://x.test/v1', apiKey: 'bad' });
     await expect(collect(provider.streamChat(request()))).rejects.toThrow('OpenRouter returned 401: Invalid API key');
   });
+
+  it('tags image-output models from each catalog', () => {
+    const [model] = mapModels('openrouter', [
+      { id: 'google/gemini-2.5-flash-image', name: 'Nano Banana', architecture: { output_modalities: ['image', 'text'] } },
+    ]);
+    expect(model?.kind).toBe('image');
+    expect(mapModels('openai', [{ id: 'gpt-image-1' }, { id: 'gpt-5' }]).map((m) => ({ id: m.model, kind: m.kind }))).toEqual([
+      { id: 'gpt-5', kind: undefined },
+      { id: 'gpt-image-1', kind: 'image' },
+    ]);
+  });
+
+  it('reads generated images from a chunk and dedupes across chunks', () => {
+    expect(mapOpenAiChunk(withImage())).toEqual([{ type: 'image', mimeType: 'image/png', data: 'AAAA' }]);
+
+    const seen = new Set<string>();
+    mapOpenAiChunk(withImage(), new Map(), seen);
+    expect(mapOpenAiChunk(withImage(), new Map(), seen)).toEqual([]);
+  });
+
+  it('adds modalities for an OpenRouter image-output request', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => sseResponse(['data: [DONE]\n\n']));
+    vi.stubGlobal('fetch', fetchMock);
+    const provider = new OpenAiCompatibleProvider({ id: 'openrouter', baseUrl: 'https://x.test/v1', apiKey: 'k' });
+    await collect(provider.streamChat(request({ imageOutput: true })));
+    expect(sentBody(fetchMock).modalities).toEqual(['image', 'text']);
+  });
+
+  it('generates an image through /images/generations instead of chat completions on OpenAI', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => Response.json({ data: [{ b64_json: 'AAAA' }] }));
+    vi.stubGlobal('fetch', fetchMock);
+    const provider = new OpenAiCompatibleProvider({ id: 'openai', baseUrl: 'https://api.test/v1', apiKey: 'sk' });
+    const events = await collect(provider.streamChat(request({ model: 'gpt-image-1', imageOutput: true })));
+    expect(events).toEqual([
+      { type: 'image', mimeType: 'image/png', data: 'AAAA' },
+      { type: 'finish', reason: 'stop' },
+    ]);
+    const [url] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('https://api.test/v1/images/generations');
+    expect(sentBody(fetchMock)).toEqual({ model: 'gpt-image-1', prompt: 'Hi', n: 1 });
+  });
+});
+
+describe('Google provider', () => {
+  it('builds contents from history and attachments, and parses image, text and usage from the response', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      Response.json({
+        candidates: [
+          { content: { parts: [{ text: 'Here you go' }, { inlineData: { mimeType: 'image/png', data: 'AAAA' } }] }, finishReason: 'STOP' },
+        ],
+        usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 20 },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const provider = new GoogleProvider({ baseUrl: 'https://generativelanguage.test/v1beta', apiKey: 'key' });
+    const messages: LoopMessage[] = [
+      { role: 'user', content: 'Make it blue', attachments: [{ id: 'i', name: 'cat.png', mimeType: 'image/png', kind: 'image', data: 'BBBB' }] },
+    ];
+    const events = await collect(provider.streamChat(request({ model: 'gemini-2.5-flash-image', messages })));
+    expect(events).toEqual([
+      { type: 'text', text: 'Here you go' },
+      { type: 'image', mimeType: 'image/png', data: 'AAAA' },
+      { type: 'usage', inputTokens: 10, outputTokens: 20 },
+      { type: 'finish', reason: 'STOP' },
+    ]);
+
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('https://generativelanguage.test/v1beta/models/gemini-2.5-flash-image:generateContent');
+    expect((init.headers as Record<string, string>)['x-goog-api-key']).toBe('key');
+    const body = sentBody(fetchMock);
+    expect(body.contents).toEqual([{ role: 'user', parts: [{ inlineData: { mimeType: 'image/png', data: 'BBBB' } }, { text: 'Make it blue' }] }]);
+    expect(body.systemInstruction).toEqual({ parts: [{ text: 'Be brief.' }] });
+  });
+
+  it('reports the provider error message on a failed request', async () => {
+    vi.stubGlobal('fetch', async () => Response.json({ error: { message: 'blocked' } }, { status: 400 }));
+    const provider = new GoogleProvider({ baseUrl: 'https://x.test/v1beta', apiKey: 'key' });
+    await expect(collect(provider.streamChat(request()))).rejects.toThrow('blocked');
+  });
 });
 
 describe('Anthropic provider', () => {
@@ -275,6 +355,10 @@ describe('Anthropic provider', () => {
 
 function params(overrides = {}) {
   return { ...DEFAULT_GENERATION, ...overrides };
+}
+
+function withImage() {
+  return { choices: [{ delta: { images: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } }] } }] };
 }
 
 describe('reasoning and sampling settings', () => {

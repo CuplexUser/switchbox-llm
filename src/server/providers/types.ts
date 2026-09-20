@@ -46,7 +46,9 @@ export type ChatEvent =
   | { type: 'native_search'; query: string }
   | { type: 'source'; url: string; title: string }
   /** The complete assistant turn in the provider's format, for replay on the next request. */
-  | { type: 'assistant_raw'; content: unknown };
+  | { type: 'assistant_raw'; content: unknown }
+  /** An image the provider generated. Base64, no data: url prefix. */
+  | { type: 'image'; mimeType: string; data: string };
 
 export interface ChatRequest {
   model: string;
@@ -57,6 +59,8 @@ export interface ChatRequest {
   tools?: ToolSpec[];
   /** Ask the provider to search the web server-side. */
   nativeSearch?: boolean;
+  /** This model answers with a generated image instead of, or alongside, text. */
+  imageOutput?: boolean;
 }
 
 export interface Provider {

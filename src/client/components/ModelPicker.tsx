@@ -229,6 +229,15 @@ export function ModelPicker({ anchorEl, open, onClose, onSelect, selected }: Mod
               </Box>
               {model && (
                 <Box sx={{ display: 'flex', gap: 1, color: 'var(--sb-text-faint)', flexShrink: 0 }}>
+                  {model.kind === 'image' && (
+                    <Typography
+                      variant="caption"
+                      title="Answers with a generated image instead of text"
+                      sx={{ px: 0.75, borderRadius: '4px', border: '1px solid var(--sb-border-strong)' }}
+                    >
+                      Image
+                    </Typography>
+                  )}
                   {model.contextLength && <Typography variant="caption">{formatContext(model.contextLength)}</Typography>}
                   {model.pricing && (
                     <Typography variant="caption" title="Input / output price per million tokens">

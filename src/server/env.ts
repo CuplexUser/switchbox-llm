@@ -13,6 +13,7 @@ const KEY_VARS: Partial<Record<ProviderId, string>> = {
   openrouter: 'OPENROUTER_API_KEY',
   openai: 'OPENAI_API_KEY',
   anthropic: 'ANTHROPIC_API_KEY',
+  google: 'GEMINI_API_KEY',
   custom: 'CUSTOM_API_KEY',
 };
 
@@ -21,6 +22,7 @@ export const KEY_REQUIRED: Record<ProviderId, boolean> = {
   openrouter: true,
   openai: true,
   anthropic: true,
+  google: true,
   ollama: false,
   lmstudio: false,
   custom: false,

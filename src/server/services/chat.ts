@@ -21,7 +21,7 @@ import type { ToolDefinition, ToolResult, ToolRunContext, WebPlan } from '../too
 import { planWeb, webGuidance } from '../tools/web.ts';
 import { workspaceGuidance } from '../tools/workspace.ts';
 import type { ApprovalBroker } from './approvals.ts';
-import type { AttachmentService } from './attachments.ts';
+import { extFromMime, toRef, type AttachmentService } from './attachments.ts';
 import { buildHistory, fitToBudget, traceForStorage } from './history.ts';
 import { buildSystemPrompt, memoryGuidance, type MemoryService } from './memory.ts';
 import { toMessage, type MessageStore } from './messages.ts';
@@ -387,6 +387,12 @@ export class ChatService {
 
       let web = assembled.web;
       let tools = assembled.tools;
+      // Image models answer with a generated attachment, not tool use or web search.
+      const isImageModel = assembled.provider === 'google' || providers.cachedModel(assembled.provider, pane.model)?.kind === 'image';
+      if (isImageModel) {
+        tools = [];
+        web = { search: null, fetch: false, nativeSearch: false, resolved: 'none', note: null };
+      }
       if (web.note) notice(web.note);
       const modelKey = `${assembled.provider}:${pane.model}`;
       const rejectedAt = this.noToolModels.get(modelKey);
@@ -422,6 +428,7 @@ export class ChatService {
             signal,
             tools: tools.map((tool) => tool.spec),
             nativeSearch: web.nativeSearch,
+            imageOutput: isImageModel,
           },
           {
             draft,
@@ -591,6 +598,18 @@ export class ChatService {
           case 'assistant_raw':
             result.raw = event.content;
             break;
+          case 'image': {
+            sink.onFirstToken();
+            const attachment = await this.deps.attachments.create({
+              name: `generated-${Date.now()}.${extFromMime(event.mimeType)}`,
+              mimeType: event.mimeType,
+              data: event.data,
+              conversationId: draft.conversationId,
+            });
+            draft.attachments = [...((draft.attachments as AttachmentRef[] | null) ?? []), toRef(attachment)];
+            result.emitted = true;
+            break;
+          }
         }
       }
     } catch (error) {

@@ -12,6 +12,7 @@ _server done_ have their API and tests in place and are waiting for their UI.
 - **Phase D (security):** done
 - **Phase E (quality):** done
 - **Phase F (workspaces):** done
+- **Phase G (image generation):** done
 
 ## A. Agents and tools
 
@@ -123,3 +124,18 @@ _server done_ have their API and tests in place and are waiting for their UI.
       (the link icon next to Files) instead of only its own hidden folder, through the same path checks. A
       bound folder is exempt from the total quota, is never deleted when the chat is (only the chat's own
       unused folder is), isn't inherited by branches, and is never trusted from an import.
+
+## G. Image generation
+
+- [x] **G1. Image models as a pane type** (L). A pane whose model is tagged `kind: 'image'` (marked "Image" in
+      the model picker) answers with a generated image instead of streamed text; the tool loop, budget fitting
+      and history replay are otherwise unchanged, since an image reply is just a step with no tool calls. The
+      image is stored through `AttachmentService` and shown on the reply exactly like a user-uploaded file, with
+      a download button.
+- [x] **G2. Three routes to Nano Banana**: OpenRouter (`modalities: ['image', 'text']` on the existing chat
+      completions call), a new direct Google provider (`GEMINI_API_KEY`, Gemini's `generateContent`), and
+      OpenAI's own `gpt-image-1`/`dall-e` models through `/images/generations` instead of `/chat/completions`.
+- [ ] **G3. Chain edits automatically** (S–M). Feed a pane's own previously generated image back in as context
+      for a follow-up prompt in the same pane, instead of requiring the user to re-attach it.
+- [ ] **G4. Cost for direct Google and OpenAI image replies** (S). Today only OpenRouter reports real cost for
+      image generation; Google and OpenAI image replies show "no price" on the Usage page.

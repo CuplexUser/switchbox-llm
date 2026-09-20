@@ -24,7 +24,7 @@ import { formatCost, formatMs, formatTokens, shortModel, tokensPerSecond } from 
 import { useChatStore, type LiveReply, type QueuedSend } from '../../stores/chat.ts';
 import { fonts } from '../../theme/theme.ts';
 import { ActivityLog } from './ActivityLog.tsx';
-import { AttachmentChips } from './AttachmentChips.tsx';
+import { AttachmentChips, GeneratedImages } from './AttachmentChips.tsx';
 
 const FINISH_NOTES: Record<string, string> = {
   aborted: 'Stopped',
@@ -362,6 +362,7 @@ export const AssistantMessage = memo(function AssistantMessage({
     <Box id={`message-${message.id}`} sx={{ scrollMarginTop: 16, '&:hover .sb-actions, &:focus-within .sb-actions': { opacity: 1 } }}>
       {message.reasoning && <Reasoning text={message.reasoning} />}
       {message.activity && <ActivityLog items={message.activity.items} sources={message.activity.sources} />}
+      {message.attachments && <GeneratedImages attachments={message.attachments} />}
       {message.content && <Markdown text={message.content} />}
       {message.error && (
         <Alert

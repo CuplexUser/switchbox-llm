@@ -2,6 +2,7 @@ import { PROVIDER_IDS, PROVIDER_LABELS, type ModelInfo, type ProviderId, type Pr
 import { apiKeyFor, KEY_REQUIRED } from '../env.ts';
 import type { SettingsService } from '../services/settings.ts';
 import { AnthropicProvider } from './anthropic.ts';
+import { GoogleProvider } from './google.ts';
 import { OpenAiCompatibleProvider } from './openaiCompatible.ts';
 import { ProviderError, type Provider } from './types.ts';
 
@@ -65,6 +66,7 @@ export class ProviderRegistry {
     const { baseUrl } = (await this.settings.get('providers'))[id];
     const apiKey = apiKeyFor(id);
     if (id === 'anthropic') return new AnthropicProvider({ baseUrl, apiKey });
+    if (id === 'google') return new GoogleProvider({ baseUrl, apiKey });
     return new OpenAiCompatibleProvider({ id, baseUrl, apiKey });
   }
 

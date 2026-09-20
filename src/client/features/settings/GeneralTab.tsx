@@ -1,14 +1,78 @@
+import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
 import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
+import IconButton from '@mui/material/IconButton';
 import Skeleton from '@mui/material/Skeleton';
 import Switch from '@mui/material/Switch';
 import ToggleButton from '@mui/material/ToggleButton';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import Typography from '@mui/material/Typography';
-import type { AppSettings } from '../../../shared/types.ts';
-import { useSettings, useUpdateSettings } from '../../api/hooks.ts';
+import { useState } from 'react';
+import { MAX_PANES, modelKey } from '../../../shared/defaults.ts';
+import type { AppSettings, ModelRef } from '../../../shared/types.ts';
+import { useModels, useSettings, useUpdateSettings } from '../../api/hooks.ts';
 import { ModelButton } from '../../components/ModelButton.tsx';
+import { ModelPicker } from '../../components/ModelPicker.tsx';
+import { ProviderMark } from '../../components/ProviderMark.tsx';
 import { ChatFontFields, ChatFontPreview } from './ChatFontControls.tsx';
 import { Panel, SettingRow, SettingsHeader } from './Section.tsx';
+
+/** Up to `MAX_PANES` models, shown as removable chips with a picker to add more. */
+function DefaultModels({ value, onChange }: { value: ModelRef[]; onChange: (value: ModelRef[]) => void }) {
+  const models = useModels();
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+
+  function name(ref: ModelRef): string {
+    return models.data?.models.find((model) => modelKey(model) === modelKey(ref))?.name ?? ref.model;
+  }
+
+  return (
+    <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 0.75, maxWidth: 420 }}>
+      {value.map((ref, index) => (
+        <Box
+          key={`${modelKey(ref)}-${index}`}
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 0.5,
+            pl: 0.75,
+            pr: 0.25,
+            py: 0.375,
+            borderRadius: '999px',
+            border: '1px solid var(--sb-border-strong)',
+          }}
+        >
+          <ProviderMark provider={ref.provider} size={16} />
+          <Typography variant="body2" noWrap sx={{ maxWidth: 180 }}>
+            {name(ref)}
+          </Typography>
+          <IconButton
+            size="small"
+            aria-label={`Remove ${name(ref)}`}
+            onClick={() => onChange(value.filter((_, position) => position !== index))}
+            sx={{ p: 0.25 }}
+          >
+            <CloseRoundedIcon sx={{ fontSize: 14 }} />
+          </IconButton>
+        </Box>
+      ))}
+      {value.length < MAX_PANES && (
+        <Button size="small" color="inherit" onClick={(event) => setAnchor(event.currentTarget)} sx={{ color: 'var(--sb-text-muted)' }}>
+          + Add a model
+        </Button>
+      )}
+      <ModelPicker
+        open={Boolean(anchor)}
+        anchorEl={anchor}
+        onClose={() => setAnchor(null)}
+        onSelect={(ref) => {
+          onChange([...value, ref]);
+          setAnchor(null);
+        }}
+      />
+    </Box>
+  );
+}
 
 export function GeneralTab() {
   const settings = useSettings();
@@ -93,6 +157,15 @@ export function GeneralTab() {
             onChange={(ref) => set('titleModel', ref)}
             placeholder="First line of the message"
             clearLabel="Use the first line instead"
+          />
+        </SettingRow>
+        <SettingRow
+          label="Default models for new chats"
+          description={`Pre-fills up to ${MAX_PANES} panes when you start a new chat. Without any, your favorites fill the first two.`}
+        >
+          <DefaultModels
+            value={settings.data.defaults.panes}
+            onChange={(panes) => update.mutate({ section: 'defaults', value: { panes } })}
           />
         </SettingRow>
       </Panel>

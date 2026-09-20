@@ -4,7 +4,10 @@ A local web app for chatting with LLMs and comparing their answers side by side.
 four models at once, each in its own pane with its own system prompt and settings, and watch the replies stream
 in parallel.
 
-- **Providers:** OpenRouter, OpenAI, Anthropic, Ollama, LM Studio, and any OpenAI-compatible endpoint
+- **Providers:** OpenRouter, OpenAI, Anthropic, Google, Ollama, LM Studio, and any OpenAI-compatible endpoint
+- **Image generation:** point a pane at an image model (Nano Banana and other Gemini image models, gpt-image-1,
+  dall-e) and sending it a prompt generates an image instead of streaming text. See
+  [Image generation](#image-generation)
 - **Comparison:** up to 4 panes per chat, each with its own stop button and a regenerate action; a
   single composer can target all panes or only some. "Compare replies" shows each exchange's speed, tokens and
   cost with totals, and a word-level diff of any two panes. One reply per exchange can be marked as the best
@@ -54,6 +57,7 @@ API keys go in `.env` and stay on the local server:
 | `OPENROUTER_API_KEY` | OpenRouter |
 | `OPENAI_API_KEY` | OpenAI |
 | `ANTHROPIC_API_KEY` | Anthropic |
+| `GEMINI_API_KEY` | Google (Nano Banana and other Gemini image models) |
 | `CUSTOM_API_KEY` | Optional key for a custom OpenAI-compatible endpoint |
 | `TAVILY_API_KEY` | Web search through Tavily |
 | `BRAVE_API_KEY` | Web search through Brave Search |
@@ -69,6 +73,28 @@ after changing `.env`.
 
 For local models, start Ollama or LM Studio and turn the provider on under Settings → Providers. The model
 picker also accepts any model id typed directly, which helps when a server doesn't list its models.
+
+## Image generation
+
+Set a pane's model to an image model — Nano Banana or Nano Banana Pro (Gemini image models), gpt-image-1, or
+dall-e — and sending it a message generates an image instead of streaming text. The image comes back as an
+attachment on the reply, with a download button, the same way an uploaded file would look. Image models are
+marked "Image" in the model picker.
+
+There are three ways to reach Nano Banana:
+
+- **OpenRouter**, which proxies it (and other image models) through the same endpoint as everything else. No
+  extra key beyond `OPENROUTER_API_KEY`
+- **Google**, directly, with `GEMINI_API_KEY`. Turn the Google provider on under Settings → Providers
+- **OpenAI**'s own `gpt-image-1` and `dall-e` models, with `OPENAI_API_KEY`
+
+Attach an image to a message in a pane using OpenRouter or Google and the model edits it instead of starting
+from nothing — editing isn't a separate mode, it's just what happens when a prompt has an image attached.
+OpenAI's image models don't support this: they only take a text prompt.
+
+A few limitations: the image appears all at once when generation finishes rather than streaming in, a pane
+doesn't automatically feed its own earlier image back in for a follow-up edit (re-attach it to do that), and
+cost is only reported for OpenRouter — Google and OpenAI image replies show "no price" on the Usage page.
 
 ## Web search
 

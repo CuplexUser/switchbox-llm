@@ -53,6 +53,18 @@ export function toRef(row: Pick<AttachmentRow, 'id' | 'name' | 'mimeType' | 'siz
   return { id: row.id, name: row.name, mimeType: row.mimeType, size: row.size, kind: row.kind as AttachmentKind };
 }
 
+const EXTENSION_BY_MIME: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+};
+
+/** A filename extension for a generated image, from the mime type the provider reported. */
+export function extFromMime(mimeType: string): string {
+  return EXTENSION_BY_MIME[mimeType.toLowerCase()] ?? 'png';
+}
+
 export function toAttachment(row: AttachmentRow): Attachment {
   const { data: _data, ...rest } = row;
   return serialize<Attachment>(rest);
