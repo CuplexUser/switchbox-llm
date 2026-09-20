@@ -57,10 +57,13 @@ export function buildSandboxArgs(request: SandboxRequest): { wslArgs: string[] }
   return { wslArgs };
 }
 
+/** Generous: a stopped WSL2 distro can take several seconds just to boot the VM before it can even run `which`. */
+const PROBE_TIMEOUT_MS = 20_000;
+
 function wslProbe(distro: string, args: string[]): Promise<boolean> {
   return new Promise((resolve) => {
     const probe = spawn('wsl.exe', [...(distro ? ['-d', distro] : []), '--', ...args], { stdio: 'ignore', windowsHide: true });
-    const timer = setTimeout(() => probe.kill(), 5_000);
+    const timer = setTimeout(() => probe.kill(), PROBE_TIMEOUT_MS);
     probe.on('error', () => resolve(false));
     probe.on('close', (code) => {
       clearTimeout(timer);
@@ -71,28 +74,39 @@ function wslProbe(distro: string, args: string[]): Promise<boolean> {
 
 const bwrapCache = new Map<string, Promise<boolean>>();
 
-/** Whether `bwrap` can be found in the given WSL distro, cached per distro since it only changes when the user installs it. */
+/**
+ * Whether `bwrap` can be found in the given WSL distro. Only a positive result is cached — a distro that was
+ * merely still booting when checked would otherwise be remembered as missing bwrap for the rest of the process.
+ */
 export function bwrapAvailable(distro: string): Promise<boolean> {
   const key = distro || '\0default';
-  let cached = bwrapCache.get(key);
-  if (!cached) {
-    cached = wslProbe(distro, ['which', 'bwrap']);
-    bwrapCache.set(key, cached);
-  }
-  return cached;
+  const cached = bwrapCache.get(key);
+  if (cached) return cached;
+  const probe = wslProbe(distro, ['which', 'bwrap']).then((found) => {
+    if (!found) bwrapCache.delete(key);
+    return found;
+  });
+  bwrapCache.set(key, probe);
+  return probe;
 }
 
 const toolchainCache = new Map<string, Promise<string[]>>();
 
-/** Which of `run_command`'s known toolchains are reachable inside the WSL distro itself, not the Windows PATH. */
+/**
+ * Which of `run_command`'s known toolchains are reachable inside the WSL distro itself, not the Windows PATH.
+ * Only a non-empty result is cached, for the same cold-boot reason as `bwrapAvailable`.
+ */
 export function detectSandboxToolchains(distro: string): Promise<string[]> {
   const key = distro || '\0default';
-  let cached = toolchainCache.get(key);
-  if (!cached) {
-    cached = Promise.all(TOOLCHAINS.map(async (name) => ((await wslProbe(distro, ['which', name])) ? name : null))).then((names) =>
-      names.filter((name): name is string => name !== null),
-    );
-    toolchainCache.set(key, cached);
-  }
-  return cached;
+  const cached = toolchainCache.get(key);
+  if (cached) return cached;
+  const probe = Promise.all(TOOLCHAINS.map(async (name) => ((await wslProbe(distro, ['which', name])) ? name : null))).then((names) =>
+    names.filter((name): name is string => name !== null),
+  );
+  const guarded = probe.then((found) => {
+    if (found.length === 0) toolchainCache.delete(key);
+    return found;
+  });
+  toolchainCache.set(key, guarded);
+  return guarded;
 }
