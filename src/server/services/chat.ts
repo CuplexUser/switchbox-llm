@@ -342,13 +342,9 @@ export class ChatService {
     signal: AbortSignal,
     log: Logger,
   ): Promise<MessageRow | null> {
-    const turn = await this.prepareTurn(conversation, pane, request, refs, emit);
-    if (!turn) return null;
     const { providers, attachments } = this.deps;
 
     const draft: Draft = { ...emptyRow(conversation.id, pane.id), provider: pane.provider, model: pane.model };
-    await emit({ type: 'start', paneId: pane.id, messageId: draft.id });
-
     const items = new Map<string, ActivityItem>();
     const sources = new Map<string, Source>();
     const recordActivity = (item: ActivityItem) => {
@@ -367,6 +363,13 @@ export class ChatService {
     const trace: LoopMessage[] = [];
 
     try {
+      // prepareTurn is inside this try too: if the connection dies right after the user's message is
+      // saved but before a reply starts, the pane still gets a placeholder to retry instead of a
+      // dangling message whose only way back is editing it.
+      const turn = await this.prepareTurn(conversation, pane, request, refs, emit);
+      if (!turn) return null;
+      await emit({ type: 'start', paneId: pane.id, messageId: draft.id });
+
       const assembled = await this.assemble(conversation, pane, turn.rows, turn.query);
       const provider = await providers.get(assembled.provider);
       const refsInHistory = attachmentRefs(turn.rows);

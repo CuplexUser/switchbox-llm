@@ -6,6 +6,8 @@ import { badRequest, readJson, type Services } from '../context.ts';
 import { errorMessage } from '../services/chat.ts';
 
 const ACTIONS = ['send', 'regenerate', 'edit'];
+/** Written regardless of model activity, so a slow tool call or a quiet thinking step never looks like a dead connection to the client's idle timeout. */
+const HEARTBEAT_MS = 15_000;
 
 export function chatRoutes({ chat, approvals }: Services): Hono {
   const app = new Hono();
@@ -37,6 +39,12 @@ export function chatRoutes({ chat, approvals }: Services): Hono {
         queue = queue.then(() => (stream.aborted ? undefined : stream.writeSSE({ data: JSON.stringify(event) })));
         return queue;
       };
+      // A comment: invisible to the client's event parsing, but bytes it can use to tell "still connected" from "dead".
+      const heartbeat = setInterval(() => {
+        queue = queue.then(async () => {
+          if (!stream.aborted) await stream.write(':\n\n');
+        });
+      }, HEARTBEAT_MS);
       stream.onAbort(() => {
         for (const controller of controllers.values()) controller.abort();
       });
@@ -47,6 +55,7 @@ export function chatRoutes({ chat, approvals }: Services): Hono {
           await emit({ type: 'error', paneId, error: errorMessage(error), message: null });
         }
       } finally {
+        clearInterval(heartbeat);
         runs.delete(request.runId);
         await emit({ type: 'end' });
       }

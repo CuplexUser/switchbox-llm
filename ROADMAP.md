@@ -56,6 +56,9 @@ _server done_ have their API and tests in place and are waiting for their UI.
       pane settings, sent in each provider's format following each Claude model's rules.
 - [x] **B7. Export a chat** as Markdown, or as a static HTML page with replies side by side (S).
 - [x] **B8. Retry with another model** when a reply fails (S). The pane keeps the model it was switched to.
+- [x] **B9. Send while a reply streams** (S). A message typed while a pane is still answering is queued instead
+      of blocked: it shows in the transcript right away and is sent once that reply finishes, so later ones see
+      the completed reply as context. Queued messages can be cancelled before they're sent.
 
 ## C. Memory
 
@@ -78,6 +81,10 @@ _server done_ have their API and tests in place and are waiting for their UI.
 - [x] **D4. Show memory suggestion failures** on the Memory page, from `GET /api/memories/suggestion-status`,
       until the next run works or the notice is dismissed.
 - [x] **D5. Versioned migrations** in `src/server/db/migrations.ts`.
+- [x] **D6. Recover from dropped connections** (S). The server writes an SSE heartbeat comment every 15 seconds
+      so a slow tool call or long thinking step never looks like a dead connection; the client gives up after 45
+      seconds of total silence and reports it as a normal error instead of leaving the reply stuck on Stop. A
+      message that ends up with no reply at all can be retried directly, without editing it.
 
 ## E. Code quality and tooling
 

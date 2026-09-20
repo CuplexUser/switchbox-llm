@@ -109,11 +109,35 @@ describe('chat store', () => {
     }
   });
 
-  it('does not start a second run while one is going', async () => {
+  it('queues a second send while one is going, then sends it once the first finishes', async () => {
+    const pending = Promise.withResolvers<void>();
+    stream.mockImplementationOnce(() => pending.promise);
+    stream.mockImplementationOnce(async () => {});
+    const first = state().send(conversation, 'One', ['p1']);
+    await state().send(conversation, 'Two', ['p1']);
+
+    // Held back, not sent yet, but visible so it can show in the transcript.
+    expect(stream).toHaveBeenCalledTimes(1);
+    expect(state().conversations.c1?.queue.map((item) => item.content)).toEqual(['Two']);
+
+    pending.resolve();
+    await first;
+    await vi.waitFor(() => expect(stream).toHaveBeenCalledTimes(2));
+    expect(stream.mock.calls[1]?.[0]).toMatchObject({ conversationId: 'c1', action: 'send', content: 'Two', paneIds: ['p1'] });
+    expect(state().conversations.c1?.queue).toEqual([]);
+  });
+
+  it('lets a queued send be cancelled before it runs', async () => {
     const pending = Promise.withResolvers<void>();
     stream.mockImplementationOnce(() => pending.promise);
     const first = state().send(conversation, 'One', ['p1']);
     await state().send(conversation, 'Two', ['p1']);
+    const queuedId = state().conversations.c1?.queue[0]?.id;
+    expect(queuedId).toBeDefined();
+
+    state().cancelQueued('c1', queuedId as string);
+    expect(state().conversations.c1?.queue).toEqual([]);
+
     pending.resolve();
     await first;
     expect(stream).toHaveBeenCalledTimes(1);

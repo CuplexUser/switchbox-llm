@@ -30,10 +30,20 @@ export interface PaneRuntime {
   live: LiveReply | null;
 }
 
+/** A message typed while a reply was still streaming, held back until it finishes. */
+export interface QueuedSend {
+  id: string;
+  content: string;
+  paneIds: string[];
+  attachments: AttachmentRef[];
+}
+
 export interface ConversationRuntime {
   hydrated: boolean;
   runId: string | null;
   panes: Record<string, PaneRuntime>;
+  /** Sends made while busy, in order; the next one starts once the current run finishes. */
+  queue: QueuedSend[];
 }
 
 interface RunInput {
@@ -48,6 +58,8 @@ interface ChatState {
   conversations: Record<string, ConversationRuntime>;
   hydrate: (conversationId: string, messages: Message[]) => void;
   send: (conversation: ConversationDetail, content: string, paneIds: string[], attachments?: AttachmentRef[]) => Promise<void>;
+  /** Removes a message that was queued while busy, before it's had a chance to send. */
+  cancelQueued: (conversationId: string, id: string) => void;
   regenerate: (conversation: ConversationDetail, paneId: string) => Promise<void>;
   /** Rewrites a message and answers it again, in every pane that has the same message. */
   edit: (conversation: ConversationDetail, paneId: string, messageId: string, content: string) => Promise<void>;
@@ -86,9 +98,11 @@ export function upsertActivity(items: ActivityItem[], item: ActivityItem): Activ
 }
 
 export const useChatStore = create<ChatState>((set, get) => {
+  const emptyRuntime = (): ConversationRuntime => ({ hydrated: true, runId: null, panes: {}, queue: [] });
+
   function updatePane(conversationId: string, paneId: string, update: (pane: PaneRuntime) => PaneRuntime): void {
     set((state) => {
-      const conversation = state.conversations[conversationId] ?? { hydrated: true, runId: null, panes: {} };
+      const conversation = state.conversations[conversationId] ?? emptyRuntime();
       const pane = conversation.panes[paneId] ?? EMPTY_PANE;
       return {
         conversations: {
@@ -105,9 +119,30 @@ export const useChatStore = create<ChatState>((set, get) => {
 
   function setRun(conversationId: string, runId: string | null): void {
     set((state) => {
-      const conversation = state.conversations[conversationId] ?? { hydrated: true, runId: null, panes: {} };
+      const conversation = state.conversations[conversationId] ?? emptyRuntime();
       return { conversations: { ...state.conversations, [conversationId]: { ...conversation, runId } } };
     });
+  }
+
+  /** Adds a send to the conversation's queue, so it shows in the transcript right away. */
+  function enqueue(conversationId: string, item: QueuedSend): void {
+    set((state) => {
+      const conversation = state.conversations[conversationId] ?? emptyRuntime();
+      return { conversations: { ...state.conversations, [conversationId]: { ...conversation, queue: [...conversation.queue, item] } } };
+    });
+  }
+
+  /** Runs the next queued send, if any, once the current run has fully finished (so it sees the completed reply as context). */
+  async function drainQueue(conversation: ConversationDetail): Promise<void> {
+    const conversationId = conversation.id;
+    const next = get().conversations[conversationId]?.queue[0];
+    if (!next) return;
+    set((state) => {
+      const current = state.conversations[conversationId];
+      if (!current) return state;
+      return { conversations: { ...state.conversations, [conversationId]: { ...current, queue: current.queue.slice(1) } } };
+    });
+    await runSend(conversation, next);
   }
 
   async function run(conversation: ConversationDetail, input: RunInput): Promise<void> {
@@ -216,7 +251,17 @@ export const useChatStore = create<ChatState>((set, get) => {
       controllers.delete(conversationId);
       setRun(conversationId, null);
       get().onRunFinished?.(conversationId);
+      void drainQueue(conversation);
     }
+  }
+
+  async function runSend(conversation: ConversationDetail, item: QueuedSend): Promise<void> {
+    await run(conversation, {
+      action: 'send',
+      content: item.content,
+      paneIds: item.paneIds,
+      ...(item.attachments.length ? { attachmentIds: item.attachments.map((attachment) => attachment.id) } : {}),
+    });
   }
 
   function messagesByPane(conversationId: string): Record<string, Message[]> {
@@ -240,17 +285,29 @@ export const useChatStore = create<ChatState>((set, get) => {
         pane.messages.push(message);
       }
       set((state) => ({
-        conversations: { ...state.conversations, [conversationId]: { hydrated: true, runId: null, panes } },
+        conversations: { ...state.conversations, [conversationId]: { hydrated: true, runId: null, panes, queue: [] } },
       }));
     },
 
     async send(conversation, content, paneIds, attachments = []) {
-      if (busy(conversation.id)) return;
-      await run(conversation, {
-        action: 'send',
-        content,
-        paneIds,
-        ...(attachments.length ? { attachmentIds: attachments.map((attachment) => attachment.id) } : {}),
+      const item: QueuedSend = { id: crypto.randomUUID(), content, paneIds, attachments };
+      if (busy(conversation.id)) {
+        enqueue(conversation.id, item);
+        return;
+      }
+      await runSend(conversation, item);
+    },
+
+    cancelQueued(conversationId, id) {
+      set((state) => {
+        const conversation = state.conversations[conversationId];
+        if (!conversation) return state;
+        return {
+          conversations: {
+            ...state.conversations,
+            [conversationId]: { ...conversation, queue: conversation.queue.filter((entry) => entry.id !== id) },
+          },
+        };
       });
     },
 

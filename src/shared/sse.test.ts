@@ -44,4 +44,25 @@ describe('parseSse', () => {
   it('flushes a final message without a trailing blank line', async () => {
     expect(await collect(['data: last'])).toEqual([{ event: null, data: 'last' }]);
   });
+
+  it('gives up and cancels the reader if nothing arrives within the idle timeout', async () => {
+    let cancelled = false;
+    const stalled = new ReadableStream<Uint8Array>({
+      pull() {
+        // Never enqueues or closes: simulates a connection that silently died.
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const iterator = parseSse(stalled, undefined, 5);
+    await expect(iterator.next()).rejects.toThrow('Lost the connection to the server.');
+    expect(cancelled).toBe(true);
+  });
+
+  it('never times out when idleTimeoutMs is 0', async () => {
+    const out: SseMessage[] = [];
+    for await (const message of parseSse(streamOf(['data: last']), undefined, 0)) out.push(message);
+    expect(out).toEqual([{ event: null, data: 'last' }]);
+  });
 });

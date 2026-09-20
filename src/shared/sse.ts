@@ -3,14 +3,23 @@ export interface SseMessage {
   data: string;
 }
 
+/** A dead connection can otherwise hang forever waiting for bytes that will never come. */
+const DEFAULT_IDLE_TIMEOUT_MS = 45_000;
+
 /**
  * Parses a Server-Sent Events byte stream into messages. Handles CRLF and LF line endings,
  * multi-line data fields, comments, and chunks that split anywhere, including inside a
  * multi-byte character.
+ *
+ * Gives up if no bytes at all — comments included — arrive for `idleTimeoutMs`, so a silently
+ * dropped connection is reported instead of leaving the caller waiting indefinitely. Pass 0 to
+ * disable. The sender is expected to write something (even just a comment) well within that
+ * window whenever it's still alive but has nothing to say yet.
  */
 export async function* parseSse(
   body: ReadableStream<Uint8Array>,
   signal?: AbortSignal,
+  idleTimeoutMs = DEFAULT_IDLE_TIMEOUT_MS,
 ): AsyncGenerator<SseMessage> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -20,6 +29,19 @@ export async function* parseSse(
 
   const onAbort = () => void reader.cancel().catch(() => {});
   signal?.addEventListener('abort', onAbort, { once: true });
+
+  async function readChunk(): Promise<ReadableStreamReadResult<Uint8Array>> {
+    if (!idleTimeoutMs) return reader.read();
+    let timer: ReturnType<typeof setTimeout>;
+    const timedOut = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error('Lost the connection to the server.')), idleTimeoutMs);
+    });
+    try {
+      return await Promise.race([reader.read(), timedOut]);
+    } finally {
+      clearTimeout(timer!);
+    }
+  }
 
   function* drain(final: boolean): Generator<SseMessage> {
     while (true) {
@@ -51,7 +73,7 @@ export async function* parseSse(
 
   try {
     while (true) {
-      const { value, done } = await reader.read();
+      const { value, done } = await readChunk();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
       yield* drain(false);
@@ -65,6 +87,8 @@ export async function* parseSse(
     if (data.length > 0) yield { event, data: data.join('\n') };
   } finally {
     signal?.removeEventListener('abort', onAbort);
+    // Settles a read left pending by a timed-out race before releasing the lock, which a pending read would reject.
+    await reader.cancel().catch(() => {});
     reader.releaseLock();
   }
 }

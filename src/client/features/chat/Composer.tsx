@@ -57,7 +57,8 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
 
   const uploading = uploads.some((item) => item.uploading);
   const ready = uploads.filter((item) => item.ref).map((item) => item.ref as AttachmentRef);
-  const canSend = (text.trim().length > 0 || ready.length > 0) && !uploading && !disabled && !running;
+  // Sending while running queues the message instead of blocking it, so !running is not part of this.
+  const canSend = (text.trim().length > 0 || ready.length > 0) && !uploading && !disabled;
 
   function addFiles(files: File[]): void {
     const room = MAX_FILES - uploads.length;
@@ -188,7 +189,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
           }}
         />
         <Box sx={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap' }}>{footer}</Box>
-        {running ? (
+        {running && (
           <Tooltip title="Stop all (Esc)">
             <IconButton
               aria-label="Stop all replies"
@@ -205,28 +206,37 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
               <StopRoundedIcon fontSize="small" />
             </IconButton>
           </Tooltip>
-        ) : (
-          <Tooltip title={disabled && disabledReason ? disabledReason : uploading ? 'Waiting for files to upload' : sendHint}>
-            <span>
-              <IconButton
-                aria-label="Send"
-                onClick={submit}
-                disabled={!canSend}
-                sx={{
-                  width: 34,
-                  height: 34,
-                  borderRadius: '10px',
-                  color: 'primary.contrastText',
-                  backgroundColor: 'var(--sb-ink)',
-                  '&:hover': { backgroundColor: 'var(--sb-ink)', color: 'primary.contrastText', opacity: 0.88 },
-                  '&.Mui-disabled': { backgroundColor: 'var(--sb-sunken)', color: 'var(--sb-text-faint)' },
-                }}
-              >
-                <ArrowUpwardRoundedIcon fontSize="small" />
-              </IconButton>
-            </span>
-          </Tooltip>
         )}
+        <Tooltip
+          title={
+            disabled && disabledReason
+              ? disabledReason
+              : uploading
+                ? 'Waiting for files to upload'
+                : running
+                  ? 'Send — added once the current reply finishes'
+                  : sendHint
+          }
+        >
+          <span>
+            <IconButton
+              aria-label={running ? 'Queue message' : 'Send'}
+              onClick={submit}
+              disabled={!canSend}
+              sx={{
+                width: 34,
+                height: 34,
+                borderRadius: '10px',
+                color: 'primary.contrastText',
+                backgroundColor: 'var(--sb-ink)',
+                '&:hover': { backgroundColor: 'var(--sb-ink)', color: 'primary.contrastText', opacity: 0.88 },
+                '&.Mui-disabled': { backgroundColor: 'var(--sb-sunken)', color: 'var(--sb-text-faint)' },
+              }}
+            >
+              <ArrowUpwardRoundedIcon fontSize="small" />
+            </IconButton>
+          </span>
+        </Tooltip>
       </Box>
     </Box>
   );

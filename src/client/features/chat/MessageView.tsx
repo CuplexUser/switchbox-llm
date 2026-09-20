@@ -1,6 +1,7 @@
 import BuildOutlinedIcon from '@mui/icons-material/BuildOutlined';
 import CallSplitRoundedIcon from '@mui/icons-material/CallSplitRounded';
 import CheckRoundedIcon from '@mui/icons-material/CheckRounded';
+import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
 import ContentCopyRoundedIcon from '@mui/icons-material/ContentCopyRounded';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import ExpandMoreRoundedIcon from '@mui/icons-material/ExpandMoreRounded';
@@ -20,7 +21,7 @@ import { memo, useState } from 'react';
 import type { ApprovalRequest, Message } from '../../../shared/types.ts';
 import { Markdown } from '../../components/Markdown.tsx';
 import { formatCost, formatMs, formatTokens, shortModel, tokensPerSecond } from '../../lib/format.ts';
-import { useChatStore, type LiveReply } from '../../stores/chat.ts';
+import { useChatStore, type LiveReply, type QueuedSend } from '../../stores/chat.ts';
 import { fonts } from '../../theme/theme.ts';
 import { ActivityLog } from './ActivityLog.tsx';
 import { AttachmentChips } from './AttachmentChips.tsx';
@@ -80,12 +81,15 @@ export function UserMessage({
   message,
   editPaneCount = 1,
   onEdit,
+  onRetry,
 }: {
   message: Message;
   /** How many panes an edit rewrites. */
   editPaneCount?: number;
   /** Missing while the message can't be edited, such as during a reply. */
   onEdit?: (content: string) => void;
+  /** Present only when this is the last message in the pane and never got a reply, so there's nothing to regenerate from. */
+  onRetry?: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const files = (message.attachments ?? []).map((ref) => ({ key: ref.id, id: ref.id, name: ref.name, size: ref.size, kind: ref.kind }));
@@ -134,6 +138,14 @@ export function UserMessage({
           {message.content}
         </Box>
       )}
+      {onRetry && (
+        <Typography variant="caption" component="div" sx={{ color: 'var(--sb-text-faint)' }}>
+          No reply came back.{' '}
+          <ButtonBase onClick={onRetry} sx={{ textDecoration: 'underline', fontSize: 'inherit', color: 'inherit' }}>
+            Try again
+          </ButtonBase>
+        </Typography>
+      )}
       {onEdit && message.content && (
         <Box className="sb-actions" sx={{ mt: -0.5, opacity: { xs: 1, md: 0 }, transition: 'opacity 120ms ease' }}>
           <Tooltip title={editPaneCount > 1 ? `Edit and send again to ${editPaneCount} panes` : 'Edit and send again'}>
@@ -143,6 +155,43 @@ export function UserMessage({
           </Tooltip>
         </Box>
       )}
+    </Box>
+  );
+}
+
+/** A message sent while a reply was still streaming: shown in place, held back until the pane is free. */
+export function QueuedMessage({ item, onCancel }: { item: QueuedSend; onCancel: () => void }) {
+  const files = item.attachments.map((ref) => ({ key: ref.id, id: ref.id, name: ref.name, size: ref.size, kind: ref.kind }));
+  return (
+    <Box sx={{ alignSelf: 'flex-end', maxWidth: '88%', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 0.75, opacity: 0.6 }}>
+      {files.length > 0 && <AttachmentChips items={files} />}
+      {item.content && (
+        <Box
+          sx={{
+            px: 1.75,
+            py: 1.125,
+            borderRadius: '12px 12px 4px 12px',
+            backgroundColor: 'var(--sb-sunken)',
+            border: '1px dashed var(--sb-border)',
+            whiteSpace: 'pre-wrap',
+            overflowWrap: 'anywhere',
+            fontSize: '0.875rem',
+            lineHeight: 1.55,
+          }}
+        >
+          {item.content}
+        </Box>
+      )}
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.25 }}>
+        <Typography variant="caption" sx={{ color: 'var(--sb-text-faint)' }}>
+          Queued — sends once the current reply finishes
+        </Typography>
+        <Tooltip title="Cancel this message">
+          <IconButton size="small" aria-label="Cancel queued message" onClick={onCancel} sx={{ width: 22, height: 22 }}>
+            <CloseRoundedIcon sx={{ fontSize: 14 }} />
+          </IconButton>
+        </Tooltip>
+      </Box>
     </Box>
   );
 }

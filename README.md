@@ -10,6 +10,8 @@ in parallel.
   cost with totals, and a word-level diff of any two panes. One reply per exchange can be marked as the best
 - **Editing:** edit a message you sent and every pane that has it answers again; branch any reply into a new
   chat; a failed reply can be retried or sent to another model
+- **Queuing:** send a message while a pane is still answering and it's queued — shown in the transcript right
+  away, sent once that reply finishes, so it can be cancelled before then or left to send itself
 - **Export:** a chat as Markdown, or as a single HTML page with the replies side by side
 - **History:** messages are saved to SQLite through [repolayer](https://www.npmjs.com/package/repolayer). A
   chat can also be temporary, in which case nothing is written. Ctrl+K searches saved messages, and a model you
@@ -275,7 +277,7 @@ The server binds to `127.0.0.1` only. It also refuses API requests that aren't a
 | Ctrl+K | Command palette: jump to a chat or page, or search saved messages |
 | Ctrl+Shift+O | New chat |
 | Ctrl+\ | Show or hide the sidebar |
-| Enter / Shift+Enter | Send / new line (switchable in Settings) |
+| Enter / Shift+Enter | Send / new line (switchable in Settings); queues instead if a reply is streaming |
 | Esc | Stop all replies while streaming |
 
 ## How it fits together
@@ -301,7 +303,14 @@ A send is one `POST /api/chat/stream` with the pane ids and the new message, and
 history from its stored messages. It streams every target pane concurrently and tags each SSE event with its
 pane id. Every pane has its own abort controller, so `POST /api/chat/stop` can stop one pane and leave the
 others running. Stopped replies keep their partial text. A tool call waiting for approval is answered with
-`POST /api/chat/approve`.
+`POST /api/chat/approve`. A message sent while a pane is busy is held client-side and sent as its own
+`POST /api/chat/stream` once that pane's run finishes.
+
+The server writes a heartbeat comment on the SSE stream every 15 seconds regardless of model or tool activity,
+so a slow tool call or a quiet thinking step never looks like a dead connection. The client gives up after 45
+seconds without any bytes at all and reports a normal error, the same one a network failure would, instead of
+leaving the reply stuck until Stop is pressed. If a message somehow ends up with no reply at all (the
+connection dropped before generation started), it offers "Try again" directly rather than needing an edit.
 
 Each saved reply keeps its tool loop in the `messages.trace` column: the model's calls, provider blocks such as
 thinking signatures, and tool results cut to 20,000 characters each. It is used to build later history and is

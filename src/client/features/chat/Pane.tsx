@@ -23,13 +23,14 @@ import { ConfirmDialog } from '../../components/ConfirmDialog.tsx';
 import { ModelPicker } from '../../components/ModelPicker.tsx';
 import { ProviderMark } from '../../components/ProviderMark.tsx';
 import { editCountKey } from '../../lib/turns.ts';
-import { messagesByPaneOf, useChatStore, type PaneRuntime } from '../../stores/chat.ts';
+import { messagesByPaneOf, useChatStore, type PaneRuntime, type QueuedSend } from '../../stores/chat.ts';
 import { channelSoftVar, channelVar } from '../../theme/theme.ts';
-import { AssistantMessage, LiveMessage, UserMessage } from './MessageView.tsx';
+import { AssistantMessage, LiveMessage, QueuedMessage, UserMessage } from './MessageView.tsx';
 import { PaneSettingsDialog } from './PaneSettingsDialog.tsx';
 import { PromptPreviewDialog } from './PromptPreviewDialog.tsx';
 
 const EMPTY: PaneRuntime = { messages: [], live: null };
+const EMPTY_QUEUE: QueuedSend[] = [];
 
 export function Pane({
   conversation,
@@ -49,11 +50,16 @@ export function Pane({
 }) {
   const runtime = useChatStore((state) => state.conversations[conversation.id]?.panes[pane.id]) ?? EMPTY;
   const running = useChatStore((state) => Boolean(state.conversations[conversation.id]?.runId));
+  // .filter() must not run inside the selector itself: a fresh array every read looks like a change to
+  // useSyncExternalStore and forces an infinite re-render loop. Select the stable array, filter in useMemo.
+  const queue = useChatStore((state) => state.conversations[conversation.id]?.queue ?? EMPTY_QUEUE);
+  const queued = useMemo(() => queue.filter((item) => item.paneIds.includes(pane.id)), [queue, pane.id]);
   const regenerate = useChatStore((state) => state.regenerate);
   const edit = useChatStore((state) => state.edit);
   const setPreferred = useChatStore((state) => state.setPreferred);
   const editCounts = useChatStore((state) => editCountKey(messagesByPaneOf(state.conversations[conversation.id]), pane.id));
   const stop = useChatStore((state) => state.stop);
+  const cancelQueued = useChatStore((state) => state.cancelQueued);
   const clearPane = useChatStore((state) => state.clearPane);
   const models = useModels();
   const prompts = usePrompts();
@@ -220,7 +226,7 @@ export function Pane({
                 : `Couldn’t change the model: ${updatePane.error?.message}`}
             </Alert>
           )}
-          {runtime.messages.length === 0 && !runtime.live && (
+          {runtime.messages.length === 0 && !runtime.live && queued.length === 0 && (
             <Box sx={{ py: 6, textAlign: 'center', color: 'var(--sb-text-faint)' }}>
               <Box
                 aria-hidden
@@ -229,13 +235,16 @@ export function Pane({
               <Typography variant="body2">Replies from {info?.name ?? pane.model} appear here.</Typography>
             </Box>
           )}
-          {runtime.messages.map((message) =>
+          {runtime.messages.map((message, position) =>
             message.role === 'user' ? (
               <UserMessage
                 key={message.id}
                 message={message}
                 editPaneCount={editCountById.get(message.id) ?? 1}
                 onEdit={running ? undefined : (content) => void edit(conversation, pane.id, message.id, content)}
+                // A dangling last message never got a reply (e.g. an interrupted connection); there's
+                // no assistant message to hang a Retry button off, so this pane needs its own.
+                onRetry={!running && position === runtime.messages.length - 1 ? () => void regenerate(conversation, pane.id) : undefined}
               />
             ) : (
               <AssistantMessage
@@ -259,6 +268,9 @@ export function Pane({
             ),
           )}
           {runtime.live && <LiveMessage live={runtime.live} />}
+          {queued.map((item) => (
+            <QueuedMessage key={item.id} item={item} onCancel={() => cancelQueued(conversation.id, item.id)} />
+          ))}
         </Box>
       </Box>
 
