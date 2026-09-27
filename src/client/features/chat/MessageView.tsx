@@ -28,11 +28,22 @@ import { AttachmentChips, GeneratedImages } from './AttachmentChips.tsx';
 
 const FINISH_NOTES: Record<string, string> = {
   aborted: 'Stopped',
+  interrupted: 'Interrupted',
+  streaming: 'Still being written',
   length: 'Cut off at the token limit',
   max_tokens: 'Cut off at the token limit',
   content_filter: 'Blocked by the provider’s content filter',
   refusal: 'The model declined',
 };
+
+/** Reasons a reply ended early that leave something worth carrying on from. */
+const RESUMABLE = new Set(['aborted', 'interrupted', 'length', 'max_tokens']);
+
+/** A reply that stopped before it was finished but got somewhere, so it can be continued instead of started over. */
+export function canContinue(message: Message): boolean {
+  if (message.role !== 'assistant' || (!message.content.trim() && !message.reasoning?.trim())) return false;
+  return Boolean(message.error) || (message.finishReason !== null && RESUMABLE.has(message.finishReason));
+}
 
 function EditBox({
   initial,
@@ -341,6 +352,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   paneModel,
   canRegenerate,
   onRegenerate,
+  onContinue,
   onRetryWith,
   onBranch,
   onPreferred,
@@ -349,6 +361,8 @@ export const AssistantMessage = memo(function AssistantMessage({
   paneModel: string;
   canRegenerate: boolean;
   onRegenerate: () => void;
+  /** Offered on a reply that stopped early: carries on from where it got to. */
+  onContinue?: () => void;
   /** Offered on a failed reply: opens a model picker anchored to the button. */
   onRetryWith?: (anchor: HTMLElement) => void;
   onBranch?: () => void;
@@ -372,6 +386,13 @@ export const AssistantMessage = memo(function AssistantMessage({
           action={
             canRegenerate && (
               <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                {onContinue && (
+                  <Tooltip title="Carry on from where the reply stopped">
+                    <Button size="small" color="inherit" onClick={onContinue}>
+                      Continue
+                    </Button>
+                  </Tooltip>
+                )}
                 <Button size="small" color="inherit" onClick={onRegenerate}>
                   Retry
                 </Button>
@@ -388,9 +409,16 @@ export const AssistantMessage = memo(function AssistantMessage({
         </Alert>
       )}
       {note && (
-        <Typography variant="caption" component="div" sx={{ mt: 1, color: 'warning.main', fontWeight: 550 }}>
-          {note}
-        </Typography>
+        <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Typography variant="caption" component="div" sx={{ color: 'warning.main', fontWeight: 550 }}>
+            {note}
+          </Typography>
+          {!message.error && canRegenerate && onContinue && (
+            <Button size="small" onClick={onContinue} sx={{ minWidth: 0, py: 0, fontSize: '0.75rem' }}>
+              Continue
+            </Button>
+          )}
+        </Box>
       )}
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1, minHeight: 28 }}>
         <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -494,6 +522,11 @@ export function LiveMessage({ live }: { live: LiveReply }) {
             <Markdown text={live.text} live />
           </Box>
         )
+      )}
+      {live.reconnecting && (
+        <Typography variant="caption" component="div" role="status" sx={{ mt: 1, color: 'var(--sb-text-faint)', fontWeight: 550 }}>
+          Connection lost. Reconnecting… The reply keeps being written on the server.
+        </Typography>
       )}
     </Box>
   );

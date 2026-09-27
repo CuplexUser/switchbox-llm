@@ -11,6 +11,7 @@ import type {
   StreamEvent,
   StreamRequest,
 } from '../../shared/types.ts';
+import { STREAMING_FINISH } from '../../shared/types.ts';
 import type { Repos } from '../db/repos.ts';
 import type { ConversationRow, MessageRow, PaneRow, SystemPromptRow } from '../db/schemas.ts';
 import { createLogger, type Logger } from '../log.ts';
@@ -35,6 +36,10 @@ const MAX_PAUSE_RESUMES = 4;
 const DEFAULT_CONTEXT_TOKENS = 128_000;
 /** How long a model that rejected tools is sent requests without them. */
 const NO_TOOLS_MEMORY_MS = 60 * 60 * 1000;
+/** How often a reply being written is saved to its row. */
+const CHECKPOINT_MS = 2_000;
+/** How much of an unfinished reply's reasoning is handed back when it's continued: the most recent part. */
+const CONTINUE_REASONING_CHARS = 20_000;
 const TITLE_PROMPT =
   'Write a short title for a chat that starts with the message below. Use 2 to 6 words, sentence case, no quotes and no ending punctuation. Reply with the title only.';
 
@@ -51,7 +56,10 @@ export function cleanTitle(text: string): string {
   return clean.length > 60 ? `${clean.slice(0, 57).trimEnd()}…` : clean;
 }
 
-/** The user message an edit rewrites in `pane`: from `messageIds`, or `messageId` when one pane is edited. */
+/**
+ * The message an edit rewrites, or a continue carries on, in `pane`: from `messageIds`, or
+ * `messageId` when there's one pane.
+ */
 function editTarget(request: StreamRequest, pane: { id: string }): string | undefined {
   return request.messageIds?.[pane.id] ?? (request.paneIds.length === 1 ? request.messageId : undefined);
 }
@@ -72,6 +80,37 @@ export async function mapLimit<T, R>(items: T[], limit: number, task: (item: T, 
   });
   await Promise.all(workers);
   return results;
+}
+
+function difference(after: number | null, before: number | null): number | null {
+  return after === null ? null : after - (before ?? 0);
+}
+
+/**
+ * Asks the model to carry on from an unfinished reply. The reply's text and tool steps are already
+ * at the end of `history`; its reasoning isn't (providers don't take reasoning back as input), so
+ * the note repeats the latest part of it.
+ */
+export function withContinueNote(history: LoopMessage[], reply: Pick<MessageRow, 'content' | 'reasoning' | 'finishReason' | 'error'>): LoopMessage[] {
+  const reasoning = reply.reasoning?.trim() ?? '';
+  const kept = reasoning.length > CONTINUE_REASONING_CHARS ? `[… earlier reasoning left out …]\n${reasoning.slice(-CONTINUE_REASONING_CHARS)}` : reasoning;
+  const cause = reply.error ? ` (${reply.error})` : reply.finishReason === 'length' ? ' (it hit the output token limit)' : '';
+  const note = [
+    `Your previous reply was cut off before it was finished${cause}.`,
+    kept ? `This is the reasoning you had done so far:\n<previous_reasoning>\n${kept}\n</previous_reasoning>` : '',
+    reply.content.trim()
+      ? "Continue your reply from exactly where it stops. Don't restart, repeat or summarize what you already wrote: your new text is added directly after it."
+      : 'You had not written any of your answer yet. Pick up from where your reasoning got to and finish the task, without redoing work you already did.',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+
+  const out = [...history];
+  const last = out.at(-1);
+  // Two user messages in a row are rejected by some providers, so a reply with nothing to show adds to the question instead.
+  if (last?.role === 'user') out[out.length - 1] = { ...last, content: `${last.content}\n\n${note}` };
+  else out.push({ role: 'user', content: note });
+  return out;
 }
 
 export type Emit = (event: StreamEvent) => void | Promise<void>;
@@ -233,6 +272,9 @@ export class ChatService {
     if (request.action === 'edit' && targets.some((pane) => !editTarget(request, pane as PaneRow))) {
       throw new Error('Name the message to edit in each pane');
     }
+    if (request.action === 'continue' && targets.some((pane) => !editTarget(request, pane as PaneRow))) {
+      throw new Error('Name the reply to continue in each pane');
+    }
 
     const content = request.content ?? '';
     const refs = request.action === 'send' && request.attachmentIds?.length ? await attachments.claim(request.attachmentIds, conversation.id) : [];
@@ -303,10 +345,24 @@ export class ChatService {
     request: StreamRequest,
     refs: AttachmentRef[],
     emit: Emit,
-  ): Promise<{ rows: MessageRow[]; query: string } | null> {
+  ): Promise<{ rows: MessageRow[]; query: string; resume?: MessageRow } | null> {
     const { store } = this.deps;
-    const rows = await store.list(conversation, pane.id);
+    // A reply another run is still writing isn't history yet.
+    const rows = (await store.list(conversation, pane.id)).filter((row) => row.finishReason !== STREAMING_FINISH);
     const content = request.content ?? '';
+
+    if (request.action === 'continue') {
+      const index = rows.findIndex((row) => row.id === editTarget(request, pane) && row.role === 'assistant');
+      const target = rows[index];
+      if (!target) {
+        await emit({ type: 'error', paneId: pane.id, error: 'That reply is no longer in this pane.', message: null });
+        return null;
+      }
+      await store.deleteAfter(conversation, pane.id, target.id);
+      await emit({ type: 'truncate', paneId: pane.id, messageId: target.id });
+      const query = rows.slice(0, index).findLast((row) => row.role === 'user')?.content ?? '';
+      return { rows: rows.slice(0, index), query, resume: target };
+    }
 
     if (request.action === 'send') {
       const user = await store.create(conversation, { ...emptyRow(conversation.id, pane.id), role: 'user', content, attachments: refs.length ? refs : null });
@@ -344,12 +400,34 @@ export class ChatService {
   ): Promise<MessageRow | null> {
     const { providers, attachments } = this.deps;
 
-    const draft: Draft = { ...emptyRow(conversation.id, pane.id), provider: pane.provider, model: pane.model };
+    const { store } = this.deps;
+    let draft: Draft = { ...emptyRow(conversation.id, pane.id), provider: pane.provider, model: pane.model };
+    /** Whether the draft has a row yet, and what it had used before this run when it continues an earlier reply. */
+    let saved = false;
+    let before: Pick<MessageRow, 'tokensIn' | 'tokensOut' | 'cost'> | null = null;
     const items = new Map<string, ActivityItem>();
     const sources = new Map<string, Source>();
+    const activity = (): Draft['activity'] => {
+      if (items.size === 0 && sources.size === 0) return draft.activity;
+      // Anything still marked running was cut short by a stop or an error.
+      const finished = [...items.values()].map((item) => (item.done ? item : { ...item, done: true }));
+      return { items: finished as ActivityItem[], sources: [...sources.values()] };
+    };
+
+    // The reply is written to its row as it streams, so a dropped server keeps what was said so far.
+    let writes: Promise<unknown> = Promise.resolve();
+    let lastWrite = 0;
+    const checkpoint = () => {
+      if (!saved || performance.now() - lastWrite < CHECKPOINT_MS) return;
+      lastWrite = performance.now();
+      const changes = { content: draft.content, reasoning: draft.reasoning, attachments: draft.attachments, activity: activity() };
+      writes = writes.then(() => store.update(conversation, draft.id, changes)).catch((error: unknown) => log.warn('could not save progress', { error }));
+    };
+
     const recordActivity = (item: ActivityItem) => {
       items.set(item.id, item);
       void emit({ type: 'activity', paneId: pane.id, item });
+      checkpoint();
     };
     const notice = (text: string) => recordActivity({ id: randomUUID(), kind: 'notice', text, done: true });
     const recordSource = (source: Source) => {
@@ -368,19 +446,37 @@ export class ChatService {
       // dangling message whose only way back is editing it.
       const turn = await this.prepareTurn(conversation, pane, request, refs, emit);
       if (!turn) return null;
-      await emit({ type: 'start', paneId: pane.id, messageId: draft.id });
+      if (turn.resume) {
+        // Carry on in the same row: new text is added to what was already written.
+        const { resume } = turn;
+        before = { tokensIn: resume.tokensIn, tokensOut: resume.tokensOut, cost: resume.cost };
+        draft = { ...resume, provider: pane.provider, model: pane.model, finishReason: null, error: null, trace: null };
+        const previous = resume.activity as { items: ActivityItem[]; sources: Source[] } | null;
+        for (const item of previous?.items ?? []) items.set(item.id, item);
+        for (const source of previous?.sources ?? []) sources.set(source.url, source);
+        await store.update(conversation, draft.id, { ...draft, finishReason: STREAMING_FINISH });
+      } else {
+        draft = { ...draft, ...(await store.create(conversation, { ...draft, finishReason: STREAMING_FINISH })), finishReason: null };
+      }
+      saved = true;
+      lastWrite = performance.now();
+      await emit(
+        turn.resume
+          ? { type: 'start', paneId: pane.id, messageId: draft.id, text: draft.content, reasoning: draft.reasoning ?? '' }
+          : { type: 'start', paneId: pane.id, messageId: draft.id },
+      );
 
       const assembled = await this.assemble(conversation, pane, turn.rows, turn.query);
       const provider = await providers.get(assembled.provider);
       const refsInHistory = attachmentRefs(turn.rows);
       const loaded = new Map((await attachments.load(refsInHistory)).map((item): [string, LoopAttachment] => [item.id, item]));
-      const history = buildHistory(turn.rows, {
+      const history = buildHistory(turn.resume ? [...turn.rows, turn.resume] : turn.rows, {
         provider: assembled.provider,
         model: pane.model,
         keepToolResults: assembled.settings.agent.keepToolResults,
         attachments: loaded,
       });
-      const messages: LoopMessage[] = [...history];
+      const messages: LoopMessage[] = turn.resume ? withContinueNote(history, turn.resume) : [...history];
       const protectFrom = Math.max(0, history.findLastIndex((message) => message.role === 'user'));
       const contextLength = providers.cachedModel(assembled.provider, pane.model)?.contextLength ?? DEFAULT_CONTEXT_TOKENS;
       const budget = Math.max(4_000, Math.floor(contextLength * 0.9) - (assembled.params.maxTokens ?? 8_192) - Math.ceil(assembled.system.length / 4));
@@ -439,6 +535,9 @@ export class ChatService {
             onFirstToken: () => {
               firstToken ??= performance.now();
             },
+            onProgress: checkpoint,
+            // A continuation picks up mid-sentence, so its first words join straight onto the old ones.
+            joinDirectly: Boolean(turn.resume) && toolRounds === 0 && pauseResumes === 0,
           },
         );
 
@@ -519,18 +618,33 @@ export class ChatService {
 
     draft.latencyMs = Math.round(performance.now() - started);
     draft.ttftMs = firstToken === null ? null : Math.round(firstToken - started);
-    if (items.size > 0 || sources.size > 0) {
-      // Anything still marked running was cut short by a stop or an error.
-      const finished = [...items.values()].map((item) => (item.done ? item : { ...item, done: true }));
-      draft.activity = { items: finished as ActivityItem[], sources: [...sources.values()] };
-    }
+    draft.activity = activity();
     draft.trace = traceForStorage(trace);
-    const saved = await this.deps.store.create(conversation, draft);
-    const message = toMessage(saved);
+    await writes;
+    let row: MessageRow;
+    if (!saved) {
+      row = await store.create(conversation, draft);
+    } else {
+      // Null when the chat was deleted mid-reply; the client still gets the reply it watched being written.
+      row = (await store.update(conversation, draft.id, draft).catch(() => null)) ?? draft;
+      // A continuation records only what it added, as its own entry.
+      const spent = before
+        ? {
+            ...row,
+            id: randomUUID(),
+            createdAt: new Date(),
+            tokensIn: difference(row.tokensIn, before.tokensIn),
+            tokensOut: difference(row.tokensOut, before.tokensOut),
+            cost: difference(row.cost, before.cost),
+          }
+        : row;
+      await store.recordUsage(conversation, spent);
+    }
+    const message = toMessage(row);
 
-    if (saved.error) await emit({ type: 'error', paneId: pane.id, error: saved.error, message });
+    if (row.error) await emit({ type: 'error', paneId: pane.id, error: row.error, message });
     else await emit({ type: 'done', paneId: pane.id, message });
-    return saved;
+    return row;
   }
 
   private lostAbilities(tools: ToolDefinition[], web: WebPlan): string {
@@ -553,9 +667,14 @@ export class ChatService {
       recordActivity: (item: ActivityItem) => void;
       recordSource: (source: Source) => void;
       onFirstToken: () => void;
+      /** Called as the draft grows, so it can be saved now and then. */
+      onProgress: () => void;
+      /** Add the first text straight onto the draft, with no break before it. */
+      joinDirectly: boolean;
     },
   ): Promise<StepResult> {
     const { draft, paneId, emit } = sink;
+    let reasoningStarted = false;
     const result: StepResult = { text: '', raw: undefined, finish: null, calls: [], emitted: false, error: null };
     try {
       for await (const event of provider.streamChat(request)) {
@@ -563,19 +682,25 @@ export class ChatService {
           case 'text': {
             sink.onFirstToken();
             // Separate what the model says before and after a round of tool calls.
-            const separator = !result.text && draft.content && !draft.content.endsWith('\n') ? '\n\n' : '';
+            const separator = !result.text && !sink.joinDirectly && draft.content && !draft.content.endsWith('\n') ? '\n\n' : '';
             result.text += event.text;
             draft.content += separator + event.text;
             result.emitted = true;
             await emit({ type: 'delta', paneId, text: separator + event.text });
+            sink.onProgress();
             break;
           }
-          case 'reasoning':
+          case 'reasoning': {
             sink.onFirstToken();
-            draft.reasoning = (draft.reasoning ?? '') + event.text;
+            // Reasoning picked up again after a continue starts on a fresh paragraph.
+            const separator = !reasoningStarted && sink.joinDirectly && draft.reasoning && !draft.reasoning.endsWith('\n') ? '\n\n' : '';
+            reasoningStarted = true;
+            draft.reasoning = (draft.reasoning ?? '') + separator + event.text;
             result.emitted = true;
-            await emit({ type: 'reasoning', paneId, text: event.text });
+            await emit({ type: 'reasoning', paneId, text: separator + event.text });
+            sink.onProgress();
             break;
+          }
           case 'usage':
             // Each request in a tool loop is billed separately, so the counts add up.
             if (event.inputTokens !== undefined) draft.tokensIn = (draft.tokensIn ?? 0) + event.inputTokens;
@@ -608,6 +733,7 @@ export class ChatService {
             });
             draft.attachments = [...((draft.attachments as AttachmentRef[] | null) ?? []), toRef(attachment)];
             result.emitted = true;
+            sink.onProgress();
             break;
           }
         }

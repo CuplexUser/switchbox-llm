@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseSse, type SseMessage } from './sse.ts';
+import { parseSse, SseTimeoutError, type SseMessage } from './sse.ts';
 
 function streamOf(chunks: (string | Uint8Array)[]): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
@@ -58,6 +58,33 @@ describe('parseSse', () => {
     const iterator = parseSse(stalled, undefined, 5);
     await expect(iterator.next()).rejects.toThrow('Lost the connection to the server.');
     expect(cancelled).toBe(true);
+  });
+
+  it('reads the id field of each message', async () => {
+    expect(await collect(['id: 7\ndata: a\n\n', 'data: b\n\n'])).toEqual([
+      { event: null, data: 'a', id: '7' },
+      { event: null, data: 'b' },
+    ]);
+  });
+
+  it('waits longer for the first bytes than between them, and says why it gave up', async () => {
+    const encoder = new TextEncoder();
+    let pulls = 0;
+    const slowStart = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        pulls++;
+        // The first bytes take 30ms, longer than the idle timeout; after that nothing comes.
+        if (pulls === 1) {
+          await new Promise((resolve) => setTimeout(resolve, 30));
+          controller.enqueue(encoder.encode('data: first\n\n'));
+        }
+      },
+    });
+    const iterator = parseSse(slowStart, undefined, { firstByteMs: 1_000, idleMs: 10, message: 'The model stopped responding.' });
+    expect((await iterator.next()).value).toEqual({ event: null, data: 'first' });
+    const failure = iterator.next();
+    await expect(failure).rejects.toBeInstanceOf(SseTimeoutError);
+    await expect(failure).rejects.toThrow('The model stopped responding.');
   });
 
   it('never times out when idleTimeoutMs is 0', async () => {

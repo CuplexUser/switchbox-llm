@@ -25,6 +25,8 @@ for (const conversation of temporary) {
 }
 
 const services = createServices(repos);
+const interrupted = await services.store.markInterrupted();
+if (interrupted > 0) log.info('marked replies cut off by the last shutdown', { count: interrupted });
 // Workspaces of the temporary chats removed above, and of chats deleted while the server was down.
 const chatIds = new Set((await repos.conversations.findMany()).map((conversation) => conversation.id));
 const orphaned = await services.workspaces.prune(chatIds);

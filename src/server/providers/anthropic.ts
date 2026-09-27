@@ -4,6 +4,7 @@ import {
   errorFromResponse,
   joinUrl,
   ProviderError,
+  PROVIDER_STREAM_TIMEOUTS,
   providerFetch,
   type ChatEvent,
   type ChatRequest,
@@ -373,7 +374,7 @@ export class AnthropicProvider implements Provider {
 
     const turn = new AnthropicTurn();
     let stopReason: string | null = null;
-    for await (const message of parseSse(response.body, request.signal)) {
+    for await (const message of parseSse(response.body, request.signal, PROVIDER_STREAM_TIMEOUTS)) {
       let event: AnthropicEvent;
       try {
         event = JSON.parse(message.data) as AnthropicEvent;

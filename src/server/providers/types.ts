@@ -1,3 +1,4 @@
+import type { SseTimeouts } from '../../shared/sse.ts';
 import type { GenerationParams, ModelInfo, ProviderId } from '../../shared/types.ts';
 
 export interface ToolSpec {
@@ -158,3 +159,14 @@ export async function providerFetch(label: string, url: string, init: RequestIni
 export function joinUrl(base: string, path: string): string {
   return `${base.replace(/\/+$/, '')}/${path.replace(/^\/+/, '')}`;
 }
+
+/**
+ * Timeouts for reading a provider's streamed reply. A reasoning model can think for minutes
+ * before its first token, and some upstreams send nothing at all while it does, so these are
+ * far longer than the browser's own connection check.
+ */
+export const PROVIDER_STREAM_TIMEOUTS: SseTimeouts = {
+  firstByteMs: 10 * 60_000,
+  idleMs: 5 * 60_000,
+  message: 'The model stopped responding before finishing its reply.',
+};

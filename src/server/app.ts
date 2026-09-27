@@ -23,6 +23,7 @@ import { AttachmentError, AttachmentService } from './services/attachments.ts';
 import { ChatService } from './services/chat.ts';
 import { MemoryService } from './services/memory.ts';
 import { MessageStore } from './services/messages.ts';
+import { RunRegistry } from './services/runs.ts';
 import { SearchService } from './services/search.ts';
 import { SettingsService } from './services/settings.ts';
 import { UsageService } from './services/usage.ts';
@@ -65,7 +66,8 @@ export function createServices(
   const approvals = new ApprovalBroker();
   const chat = new ChatService({ repos, settings, providers: registry, memory, tools, store, attachments, approvals, workspaces });
   const usage = new UsageService(repos, registry);
-  return { repos, settings, registry, memory, store, attachments, search, tools, mcp, approvals, chat, usage, workspaces };
+  const runs = new RunRegistry();
+  return { repos, settings, registry, memory, store, attachments, search, tools, mcp, approvals, chat, runs, usage, workspaces };
 }
 
 export function createApi(services: Services): Hono {

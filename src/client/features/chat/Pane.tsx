@@ -25,7 +25,7 @@ import { ProviderMark } from '../../components/ProviderMark.tsx';
 import { editCountKey } from '../../lib/turns.ts';
 import { messagesByPaneOf, useChatStore, type PaneRuntime, type QueuedSend } from '../../stores/chat.ts';
 import { channelSoftVar, channelVar } from '../../theme/theme.ts';
-import { AssistantMessage, LiveMessage, QueuedMessage, UserMessage } from './MessageView.tsx';
+import { AssistantMessage, canContinue, LiveMessage, QueuedMessage, UserMessage } from './MessageView.tsx';
 import { PaneSettingsDialog } from './PaneSettingsDialog.tsx';
 import { PromptPreviewDialog } from './PromptPreviewDialog.tsx';
 
@@ -55,6 +55,7 @@ export function Pane({
   const queue = useChatStore((state) => state.conversations[conversation.id]?.queue ?? EMPTY_QUEUE);
   const queued = useMemo(() => queue.filter((item) => item.paneIds.includes(pane.id)), [queue, pane.id]);
   const regenerate = useChatStore((state) => state.regenerate);
+  const continueReply = useChatStore((state) => state.continueReply);
   const edit = useChatStore((state) => state.edit);
   const setPreferred = useChatStore((state) => state.setPreferred);
   const editCounts = useChatStore((state) => editCountKey(messagesByPaneOf(state.conversations[conversation.id]), pane.id));
@@ -253,6 +254,7 @@ export function Pane({
                 paneModel={pane.model}
                 canRegenerate={!running && message.id === lastAssistant?.id}
                 onRegenerate={() => void regenerate(conversation, pane.id)}
+                onContinue={canContinue(message) ? () => void continueReply(conversation, pane.id, message.id) : undefined}
                 onRetryWith={setRetryAnchor}
                 onBranch={
                   running || message.error

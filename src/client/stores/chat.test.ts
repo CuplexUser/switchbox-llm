@@ -1,21 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ActivityItem, StreamEvent, StreamRequest } from '../../shared/types.ts';
-import { api } from '../api/client.ts';
-import { streamChat } from '../api/stream.ts';
+import { api, ApiError } from '../api/client.ts';
+import { followRun, streamChat } from '../api/stream.ts';
 import { conversationWith, message, pane } from '../testing.ts';
 import { applyMessageEvent, useChatStore } from './chat.ts';
 
-vi.mock('../api/stream.ts', () => ({ streamChat: vi.fn<typeof streamChat>() }));
-vi.mock('../api/client.ts', () => ({ api: vi.fn<typeof api>() }));
+vi.mock('../api/stream.ts', () => ({ streamChat: vi.fn<typeof streamChat>(), followRun: vi.fn<typeof followRun>() }));
+vi.mock('../api/client.ts', async (actual) => ({ ...(await actual<Record<string, unknown>>()), api: vi.fn<typeof api>() }));
 
 const stream = vi.mocked(streamChat);
+const resume = vi.mocked(followRun);
 const request = vi.mocked(api);
 const conversation = conversationWith([pane('p1', 'vendor/alpha', 0), pane('p2', 'vendor/beta', 1)]);
 
-/** Answers the next stream with the events built for its request. */
+/** Answers the next stream with the events built for its request, numbered from 1. */
 function replyWith(events: (request: StreamRequest) => StreamEvent[]): void {
   stream.mockImplementationOnce(async (body, onEvent) => {
-    for (const event of events(body)) onEvent(event);
+    events(body).forEach((event, index) => onEvent(event, index + 1));
   });
 }
 
@@ -33,6 +34,8 @@ beforeEach(() => {
     return 1;
   });
   vi.stubGlobal('cancelAnimationFrame', () => undefined);
+  // By default a dropped run can't be found again.
+  resume.mockRejectedValue(new ApiError('Run not found', 404));
   useChatStore.setState({ conversations: {}, onRunFinished: null });
 });
 
@@ -87,6 +90,7 @@ describe('chat store', () => {
       { type: 'activity', paneId: 'p1', item: tool(false) },
       { type: 'activity', paneId: 'p1', item: tool(true) },
       { type: 'done', paneId: 'p1', message: message('a1', 'p1', 'assistant', 'Done') },
+      { type: 'end' },
     ]);
     const unsubscribe = useChatStore.subscribe((next) => {
       activity = next.conversations.c1?.panes.p1?.live?.activity ?? activity;
@@ -195,6 +199,104 @@ describe('chat store', () => {
     expect(request).toHaveBeenCalledWith('/conversations/c1/messages/b1', { method: 'PATCH', json: { preferred: false } });
     expect(paneOf('p1')?.messages[1]?.preferred).toBeNull();
     expect(paneOf('p2')?.messages[1]?.preferred).toBe(false);
+  });
+
+  it('picks a dropped run back up after the last event it saw', async () => {
+    replyWith(() => [
+      { type: 'start', paneId: 'p1', messageId: 'a1' },
+      { type: 'delta', paneId: 'p1', text: 'Hel' },
+    ]);
+    const reconnecting: boolean[] = [];
+    resume.mockImplementationOnce(async (_runId, after, onEvent) => {
+      reconnecting.push(paneOf('p1')?.live?.reconnecting ?? false);
+      // The replay may repeat an event already seen.
+      onEvent({ type: 'delta', paneId: 'p1', text: 'Hel' }, 2);
+      onEvent({ type: 'delta', paneId: 'p1', text: 'lo' }, 3);
+      reconnecting.push(paneOf('p1')?.live?.reconnecting ?? true);
+      onEvent({ type: 'done', paneId: 'p1', message: message('a1', 'p1', 'assistant', 'Hello') }, 4);
+      onEvent({ type: 'end' }, 5);
+      expect(after).toBe(2);
+    });
+    await state().send(conversation, 'Hi', ['p1']);
+
+    expect(resume).toHaveBeenCalledTimes(1);
+    expect(reconnecting).toEqual([true, false]);
+    expect(paneOf('p1')?.messages.map((entry) => entry.content)).toEqual(['Hello']);
+  });
+
+  it('shows what the server saved when a dropped run is gone', async () => {
+    replyWith(() => [
+      { type: 'start', paneId: 'p1', messageId: 'a1' },
+      { type: 'delta', paneId: 'p1', text: 'Partial' },
+    ]);
+    request.mockResolvedValueOnce([
+      message('u1', 'p1', 'user', 'Hi'),
+      message('a1', 'p1', 'assistant', 'Partial answer', { finishReason: 'interrupted', error: 'The server stopped' }),
+    ]);
+    await state().send(conversation, 'Hi', ['p1']);
+
+    expect(request).toHaveBeenCalledWith('/conversations/c1/messages');
+    expect(paneOf('p1')?.messages.map((entry) => entry.content)).toEqual(['Hi', 'Partial answer']);
+  });
+
+  it('keeps the text that arrived when nothing can be recovered', async () => {
+    stream.mockImplementationOnce(async (_body, onEvent) => {
+      onEvent({ type: 'start', paneId: 'p1', messageId: 'a1' }, 1);
+      onEvent({ type: 'reasoning', paneId: 'p1', text: 'Thinking hard' }, 2);
+      onEvent({ type: 'delta', paneId: 'p1', text: 'Half an' }, 3);
+      throw new Error('Lost the connection to the server.');
+    });
+    request.mockRejectedValueOnce(new Error('offline'));
+    await state().send(conversation, 'Hi', ['p1']);
+
+    expect(paneOf('p1')?.messages).toEqual([
+      expect.objectContaining({ id: 'a1', content: 'Half an', reasoning: 'Thinking hard', error: 'Lost the connection to the server.' }),
+    ]);
+  });
+
+  it('does not try to reconnect to a run the server refused', async () => {
+    stream.mockRejectedValueOnce(new ApiError('Message is empty', 400));
+    await state().send(conversation, 'Hi', ['p1']);
+
+    expect(resume).not.toHaveBeenCalled();
+    expect(request).not.toHaveBeenCalled();
+    expect(paneOf('p1')?.messages).toEqual([expect.objectContaining({ error: 'Message is empty' })]);
+  });
+
+  it('continues an unfinished reply from what it already says', async () => {
+    state().hydrate('c1', [message('u1', 'p1', 'user', 'Solve it'), message('a1', 'p1', 'assistant', 'Step one', { finishReason: 'aborted', reasoning: 'hmm' })]);
+    let live: { text: string; reasoning: string } | undefined;
+    let during: string[] = [];
+    stream.mockImplementationOnce(async (_body, onEvent) => {
+      during = paneOf('p1')?.messages.map((entry) => entry.id) ?? [];
+      onEvent({ type: 'start', paneId: 'p1', messageId: 'a1', text: 'Step one', reasoning: 'hmm' }, 1);
+      onEvent({ type: 'delta', paneId: 'p1', text: ', step two' }, 2);
+      live = paneOf('p1')?.live ?? undefined;
+      onEvent({ type: 'done', paneId: 'p1', message: message('a1', 'p1', 'assistant', 'Step one, step two') }, 3);
+      onEvent({ type: 'end' }, 4);
+    });
+    await state().continueReply(conversation, 'p1', 'a1');
+
+    expect(stream.mock.calls[0]?.[0]).toMatchObject({ action: 'continue', paneIds: ['p1'], messageIds: { p1: 'a1' } });
+    expect(during).toEqual(['u1']);
+    expect(live).toMatchObject({ text: 'Step one, step two', reasoning: 'hmm' });
+    expect(paneOf('p1')?.messages.map((entry) => entry.content)).toEqual(['Solve it', 'Step one, step two']);
+  });
+
+  it('attaches to a reply the server is still writing when a chat loads', async () => {
+    request.mockImplementation(async (path) => (path === '/conversations/c1/runs' ? [{ runId: 'r1', paneIds: ['p1'] }] : []));
+    resume.mockImplementationOnce(async (runId, after, onEvent) => {
+      expect([runId, after]).toEqual(['r1', 0]);
+      onEvent({ type: 'start', paneId: 'p1', messageId: 'a1' }, 2);
+      onEvent({ type: 'delta', paneId: 'p1', text: 'So far' }, 3);
+      onEvent({ type: 'done', paneId: 'p1', message: message('a1', 'p1', 'assistant', 'So far, done') }, 4);
+      onEvent({ type: 'end' }, 5);
+    });
+    state().hydrate('c1', [message('u1', 'p1', 'user', 'Go'), message('a1', 'p1', 'assistant', 'So', { finishReason: 'streaming' })]);
+
+    await vi.waitFor(() => expect(state().conversations.c1?.runId).toBeNull());
+    expect(resume).toHaveBeenCalledTimes(1);
+    expect(paneOf('p1')?.messages.map((entry) => entry.content)).toEqual(['Go', 'So far, done']);
   });
 
   it('hydrates once and forgets a conversation', () => {

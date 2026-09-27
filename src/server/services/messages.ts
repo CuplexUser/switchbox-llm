@@ -1,4 +1,4 @@
-import type { Message } from '../../shared/types.ts';
+import { INTERRUPTED_FINISH, STREAMING_FINISH, type Message } from '../../shared/types.ts';
 import type { Repos } from '../db/repos.ts';
 import type { ConversationRow, MessageRow } from '../db/schemas.ts';
 import { createLogger } from '../log.ts';
@@ -74,12 +74,29 @@ export class MessageStore {
       return row;
     }
     const saved = await this.repos.messages.create(row);
-    const usage = usageFromMessage(saved);
-    if (usage) {
-      // Usage is bookkeeping: failing to record it must not lose the reply.
-      await this.repos.usage.create(usage).catch((error: unknown) => log.warn('could not record usage', { messageId: saved.id, error }));
-    }
+    // A reply still being written is recorded once it's finished.
+    if (saved.finishReason !== STREAMING_FINISH) await this.recordUsage(conversation, saved);
     return saved;
+  }
+
+  /** Records what a finished reply cost. Temporary chats aren't tracked. */
+  async recordUsage(conversation: ConversationRow, row: MessageRow): Promise<void> {
+    if (!conversation.persist) return;
+    const usage = usageFromMessage(row);
+    if (!usage) return;
+    // Usage is bookkeeping: failing to record it must not lose the reply.
+    await this.repos.usage.create(usage).catch((error: unknown) => log.warn('could not record usage', { messageId: row.id, error }));
+  }
+
+  /**
+   * Marks replies that were still being written when the server last stopped. Their text so far
+   * was saved as it streamed, so they can be continued. Temporary chats don't survive a restart.
+   */
+  async markInterrupted(): Promise<number> {
+    return this.repos.messages.updateMany(
+      { where: { finishReason: STREAMING_FINISH } },
+      { finishReason: INTERRUPTED_FINISH, error: 'The server stopped while this reply was being written.' },
+    );
   }
 
   async update(conversation: ConversationRow, id: string, changes: Partial<MessageRow>): Promise<MessageRow | null> {

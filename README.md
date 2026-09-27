@@ -332,11 +332,28 @@ others running. Stopped replies keep their partial text. A tool call waiting for
 `POST /api/chat/approve`. A message sent while a pane is busy is held client-side and sent as its own
 `POST /api/chat/stream` once that pane's run finishes.
 
+A run doesn't depend on the connection that started it. The server keeps every run's events, numbered, in
+memory until five minutes after it ends. Closing the tab, reloading or losing the network doesn't stop
+generation; only Stop does. A client that drops picks the run back up with
+`GET /api/chat/runs/:runId/stream?after=<last event id>`. A page opened mid-reply finds runs still going with
+`GET /api/conversations/:id/runs` and replays them. A reply is saved to its row every couple of seconds while
+it streams, marked `finishReason: 'streaming'`. At startup, any reply still marked that way (the server stopped
+mid-reply) becomes `interrupted` and keeps what it had written so far.
+
 The server writes a heartbeat comment on the SSE stream every 15 seconds regardless of model or tool activity,
-so a slow tool call or a quiet thinking step never looks like a dead connection. The client gives up after 45
-seconds without any bytes at all and reports a normal error, the same one a network failure would, instead of
-leaving the reply stuck until Stop is pressed. If a message somehow ends up with no reply at all (the
-connection dropped before generation started), it offers "Try again" directly rather than needing an edit.
+so a slow tool call or a quiet thinking step never looks like a dead connection. The client treats 45 seconds
+without any bytes as a dropped connection: it shows "Reconnecting…" and keeps trying for about two minutes. If
+the run can't be found again, it loads what the server saved. Only if that fails too does it show an error,
+which still holds the text that had arrived. The server's own reads from a provider are more patient: 10 minutes
+for the first byte, since a reasoning model can think silently for a long time, then 5 minutes between bytes.
+If a message somehow ends up with no reply at all (the connection dropped before generation started), it offers
+"Try again" directly rather than needing an edit.
+
+A reply that stopped early (stopped, interrupted, cut off at the token limit, or failed partway) and got
+somewhere offers **Continue** next to Retry. The `continue` stream action sends the history with the unfinished
+reply at the end, then a note carrying the latest 20,000 characters of its reasoning and asking the model to
+carry on without starting over. The new text is added to the same message, and its usage is recorded as a
+separate entry.
 
 Each saved reply keeps its tool loop in the `messages.trace` column: the model's calls, provider blocks such as
 thinking signatures, and tool results cut to 20,000 characters each. It is used to build later history and is

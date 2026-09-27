@@ -58,7 +58,7 @@ function paneData(conversationId: string, position: number, pane: NewPane, promp
   };
 }
 
-export function conversationRoutes({ repos, settings, chat, store, attachments, workspaces }: Services): Hono {
+export function conversationRoutes({ repos, settings, chat, runs, store, attachments, workspaces }: Services): Hono {
   const app = new Hono();
 
   async function loadConversation(id: string): Promise<ConversationRow> {
@@ -154,6 +154,7 @@ export function conversationRoutes({ repos, settings, chat, store, attachments, 
   app.delete('/conversations/:id', async (c) => {
     const id = c.req.param('id');
     await loadConversation(id);
+    runs.stopConversation(id);
     await store.deleteConversation(id);
     await repos.conversations.withTransaction(async (tx, ctx) => {
       await repos.panes.with(ctx).deleteMany({ where: { conversationId: id } });

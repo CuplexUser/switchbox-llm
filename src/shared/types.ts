@@ -367,7 +367,18 @@ export interface ChatTurn {
  * regenerate: drop the replies after each pane's last user message and answer it again.
  * edit: replace the text of user message `messageId`, drop everything after it, and answer again (one pane).
  */
-export type StreamAction = 'send' | 'regenerate' | 'edit';
+export type StreamAction = 'send' | 'regenerate' | 'edit' | 'continue';
+
+/** How a reply that is still being written is marked while the server saves it as it goes. */
+export const STREAMING_FINISH = 'streaming';
+/** How a reply cut off by a server restart is marked. */
+export const INTERRUPTED_FINISH = 'interrupted';
+
+/** A run of a chat that is still going, which a client can attach to. */
+export interface ActiveRun {
+  runId: string;
+  paneIds: string[];
+}
 
 export interface StreamRequest {
   runId: string;
@@ -379,7 +390,10 @@ export interface StreamRequest {
   paneIds: string[];
   /** edit, with one pane: the user message to rewrite. */
   messageId?: string;
-  /** edit, with several panes: the user message to rewrite in each pane, by pane id. */
+  /**
+   * edit, with several panes: the user message to rewrite in each pane, by pane id.
+   * continue: the unfinished reply to carry on in each pane.
+   */
   messageIds?: Record<string, string>;
 }
 
@@ -395,7 +409,8 @@ export type StreamEvent =
   | { type: 'user'; paneId: string; message: Message }
   /** Everything after `messageId` in the pane was removed. */
   | { type: 'truncate'; paneId: string; messageId: string }
-  | { type: 'start'; paneId: string; messageId: string }
+  /** A reply began. When it continues an unfinished one, `text` and `reasoning` hold what was already written. */
+  | { type: 'start'; paneId: string; messageId: string; text?: string; reasoning?: string }
   | { type: 'delta'; paneId: string; text: string }
   | { type: 'reasoning'; paneId: string; text: string }
   | { type: 'activity'; paneId: string; item: ActivityItem }

@@ -5,6 +5,7 @@ import {
   errorFromResponse,
   joinUrl,
   ProviderError,
+  PROVIDER_STREAM_TIMEOUTS,
   providerFetch,
   type ChatEvent,
   type ChatRequest,
@@ -286,7 +287,7 @@ export class OpenAiCompatibleProvider implements Provider {
 
     const pending = new Map<number, ToolCall>();
     const seenImages = new Set<string>();
-    for await (const message of parseSse(response.body, request.signal)) {
+    for await (const message of parseSse(response.body, request.signal, PROVIDER_STREAM_TIMEOUTS)) {
       if (message.data === '[DONE]') break;
       let chunk: OpenAiChunk;
       try {

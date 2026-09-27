@@ -7,6 +7,7 @@ import type { AttachmentService } from './services/attachments.ts';
 import type { ChatService } from './services/chat.ts';
 import type { MemoryService } from './services/memory.ts';
 import type { MessageStore } from './services/messages.ts';
+import type { RunRegistry } from './services/runs.ts';
 import type { SearchService } from './services/search.ts';
 import type { SettingsService } from './services/settings.ts';
 import type { UsageService } from './services/usage.ts';
@@ -26,6 +27,7 @@ export interface Services {
   mcp: McpManager;
   approvals: ApprovalBroker;
   chat: ChatService;
+  runs: RunRegistry;
   usage: UsageService;
   workspaces: WorkspaceService;
 }

@@ -37,6 +37,8 @@ _server done_ have their API and tests in place and are waiting for their UI.
   - [x] Anthropic prompt caching
   - [x] Retry with backoff on 408/429/5xx/529 before the first streamed byte
   - [x] Remember for an hour when a model rejects tools
+  - [x] Runs survive a dropped connection: saved as they stream, resumable by event id, and continuable after an
+        interruption
 - [x] **A7. Agent profiles** (M). System prompts gained tool groups, a round limit and generation settings, edited
       under Settings → Profiles.
 
