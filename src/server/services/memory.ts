@@ -17,6 +17,20 @@ import type { SettingsService } from './settings.ts';
 
 const log = createLogger('memory');
 
+/** Most facts one exchange may add. */
+const MAX_SUGGESTIONS = 2;
+/**
+ * A suggestion this close to any memory already stored is dropped: whether it was saved, suggested,
+ * rejected or forgotten, the user has already seen it once and answered. Unrelated memories score
+ * under 0.3 and rewordings of one fact 0.5 or more.
+ */
+const RESEMBLANCE_LIMIT = 0.5;
+/** Recent rejections shown to the suggestion model as examples of what not to suggest. */
+const REJECTED_EXAMPLES = 20;
+/** The reply is only context, so a long one is cut short. */
+const REPLY_CONTEXT_CHARS = 1_500;
+const USER_MESSAGE_CHARS = 8_000;
+
 /** Tells the model it has memory, including when nothing is stored yet, so it stops claiming it can't remember. */
 export function memoryGuidance(): string {
   return (
@@ -102,6 +116,23 @@ export function similarity(first: string, second: string): number {
   return shared / (a.size + b.size - shared);
 }
 
+/**
+ * How much two facts say the same thing, from 0 to 1, by their keywords. Word overlap alone misses a
+ * short rewording of a longer fact ("Has Blender installed" against "Uses Blender for 3D, installed
+ * locally"), so the shared keywords' share of the shorter fact counts too. Two short facts sharing a
+ * couple of words are often opposites ("Prefers TypeScript over JavaScript" and "Prefers Python over
+ * JavaScript"), so under three shared keywords only counts when one fact is wholly inside the other.
+ */
+export function resemblance(first: string, second: string): number {
+  const a = new Set(keywords(first));
+  const b = new Set(keywords(second));
+  let shared = 0;
+  for (const word of a) if (b.has(word)) shared++;
+  const shorter = Math.min(a.size, b.size);
+  if (shared === 0 || (shared < 3 && shared < shorter)) return 0;
+  return Math.max(shared / (a.size + b.size - shared), shared / shorter);
+}
+
 /** Pulls a JSON array out of a model reply, tolerating code fences and surrounding prose. */
 function extractJsonArray(text: string): unknown[] {
   const start = text.indexOf('[');
@@ -130,19 +161,57 @@ export function parseSuggestions(text: string, limit = 5): MemoryFact[] {
   return facts;
 }
 
-const SUGGESTION_PROMPT = `You maintain a long-term memory of durable facts about a user: their preferences, background, projects, and standing instructions.
+/**
+ * Deliberately strict. Most memories are saved on purpose, on the Memory page or by asking a model to
+ * remember something, so a suggestion only earns its place when it would matter in unrelated chats.
+ */
+const SUGGESTION_PROMPT = `You maintain a small long-term memory about one user. The user saves most memories themselves, so you only suggest a fact when it is clearly worth keeping. Suggesting nothing is the normal outcome.
 
-Read the latest exchange and propose new facts worth remembering across future conversations. Only include facts the user stated or clearly implied about themselves. Skip anything temporary, trivial, about the assistant, or already covered by the existing memories.
+A fact qualifies only if all of these hold:
+- The user said it about themselves in their own message. The assistant's reply is there to help you understand the user's message and is never a source of facts.
+- It would still help in an unrelated conversation a month from now.
+- No existing memory covers it, and it is nothing like a fact the user rejected.
 
-Reply with only a JSON array, for example:
+Never suggest:
+- Details of the current task: answers, solutions, file names, paths, image sizes, code, or numbers from the problem.
+- Facts about the assistant, its tools, the workspace or sandbox, or software installed there.
+- Interests guessed from one question. Asking about a topic once does not make it an interest.
+- Instructions that only make sense for one kind of task.
+
+Good: "Prefers metric units", "Is a backend developer who mainly writes Go", "Wants answers without emoji".
+Bad: "The puzzle's correct answer was option 4", "Has Python available in the workspace", "Interested in bond markets" (from a single question about them).
+
+Reply with only a JSON array of at most ${MAX_SUGGESTIONS} facts, for example:
 [{"content": "Prefers TypeScript over JavaScript", "category": "preferences"}]
-Use short categories such as preferences, background, projects, instructions. Reply [] when there is nothing new.`;
+Use short categories such as preferences, background, instructions. Reply [] when nothing qualifies.`;
 
 const CONFLICT_PROMPT = `You review a list of remembered facts about one user. Find pairs of facts that contradict each other, such as two different home cities or opposite preferences. Facts that merely overlap are not conflicts.
 
 Reply with only a JSON array, for example:
 [{"first": 3, "second": 7, "reason": "Different home cities"}]
 Use the numbers from the list. Reply [] when nothing conflicts.`;
+
+function bulleted(rows: Pick<MemoryRow, 'content'>[]): string {
+  return rows.map((row) => `- ${row.content}`).join('\n') || '(none)';
+}
+
+/**
+ * What the suggestion model reads. Only the user's own words count as evidence; the reply is labeled
+ * as context, since facts about the sandbox and the task were mostly lifted from replies and tool output.
+ */
+export function suggestionInput(exchange: ChatTurn[], current: Pick<MemoryRow, 'content'>[], rejected: Pick<MemoryRow, 'content'>[]): string {
+  const said = (role: ChatTurn['role'], limit: number) =>
+    exchange
+      .filter((turn) => turn.role === role)
+      .map((turn) => (turn.content.length > limit ? `${turn.content.slice(0, limit)}…` : turn.content))
+      .join('\n\n');
+  return [
+    `Existing memories, saved or waiting for review:\n${bulleted(current)}`,
+    `Facts the user rejected. Never suggest these or anything like them:\n${bulleted(rejected.slice(0, REJECTED_EXAMPLES))}`,
+    `The user's message, the only evidence you may use:\n${said('user', USER_MESSAGE_CHARS) || '(empty)'}`,
+    `The assistant's reply, for context only:\n${said('assistant', REPLY_CONTEXT_CHARS) || '(empty)'}`,
+  ].join('\n\n');
+}
 
 export interface MatchResult {
   match: MemoryRow | null;
@@ -273,24 +342,23 @@ export class MemoryService {
     if (!memorySettings.autoSuggest || !model) return 0;
 
     try {
-      const existing = await this.repos.memories.findMany();
+      const existing = await this.repos.memories.findMany({ orderBy: [{ field: 'updatedAt', direction: 'desc' }] });
       const known = new Set(existing.map((memory) => normalizeFact(memory.content)));
-      const existingList = existing
-        .filter((memory) => memory.status === 'active' || memory.status === 'pending')
-        .map((memory) => `- ${memory.content}`)
-        .join('\n');
-      const transcript = exchange.map((turn) => `${turn.role.toUpperCase()}: ${turn.content}`).join('\n\n');
-      const reply = await this.complete(
-        model,
-        SUGGESTION_PROMPT,
-        `Existing memories:\n${existingList || '(none)'}\n\nLatest exchange:\n${transcript}`,
-        signal,
-      );
+      const current = existing.filter((memory) => memory.status === 'active' || memory.status === 'pending');
+      const rejected = existing.filter((memory) => memory.status === 'rejected');
+      const reply = await this.complete(model, SUGGESTION_PROMPT, suggestionInput(exchange, current, rejected), signal);
 
       let added = 0;
+      // The cap counts what survives the checks below, so echoes of old memories don't use it up.
       for (const fact of parseSuggestions(reply)) {
+        if (added >= MAX_SUGGESTIONS) break;
         const key = normalizeFact(fact.content);
         if (!key || known.has(key)) continue;
+        const echo = existing.find((row) => resemblance(row.content, fact.content) >= RESEMBLANCE_LIMIT);
+        if (echo) {
+          log.info('suggestion dropped', { conversationId, content: fact.content, resembles: echo.id, status: echo.status });
+          continue;
+        }
         known.add(key);
         const row = await this.repos.memories.create({
           content: fact.content,
@@ -301,6 +369,8 @@ export class MemoryService {
           scope: null,
           sourceConversationId: conversationId,
         });
+        // Later suggestions from this same reply are compared against it too.
+        existing.push(row);
         await this.record(row.id, 'created', 'suggestion', fact.content);
         added++;
       }

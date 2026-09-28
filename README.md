@@ -249,7 +249,11 @@ The system prompt tells the model it has long-term memory, so it uses these tool
 remember.
 
 Under Settings → Memory you can also have a model read each exchange and suggest facts. Those wait in
-Suggestions until you keep or dismiss them. If the suggestion model fails, the Memory page shows the error until
+Suggestions until you keep or dismiss them. Suggestions are deliberately sparse, since asking a model to remember
+something or adding it on the Memory page are the main ways in. Only your own messages count as evidence
+(never the model's replies or tool output), a fact has to be useful in unrelated chats, and each exchange adds at
+most two. The model is shown what you dismissed recently, and a suggestion worded like any memory already
+stored, whether saved, waiting, dismissed or forgotten, is dropped. If the suggestion model fails, the Memory page shows the error until
 the next run works or you dismiss it.
 
 On the Memory page:

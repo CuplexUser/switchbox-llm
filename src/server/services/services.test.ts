@@ -3,7 +3,7 @@ import { DEFAULT_SETTINGS } from '../../shared/defaults.ts';
 import type { ActivityItem } from '../../shared/types.ts';
 import { ProviderError } from '../providers/types.ts';
 import { cleanTitle, mapLimit, titleFrom } from './chat.ts';
-import { buildSystemPrompt, parseSuggestions, rankFacts, similarity } from './memory.ts';
+import { buildSystemPrompt, parseSuggestions, rankFacts, resemblance, similarity } from './memory.ts';
 import { mergeDefaults } from './settings.ts';
 import { doneMessage, FakeProvider, seedConversation, send, setup } from './testing.ts';
 
@@ -382,6 +382,46 @@ describe('MemoryService.suggest', () => {
     fail = true;
     await expect(memory.suggest('c1', exchange)).rejects.toThrow('suggestion model down');
     expect(memory.suggestionStatus().lastError).toBe('suggestion model down');
+  });
+
+  it('drops rewordings of anything already suggested or rejected, then keeps at most two new facts', async () => {
+    const provider = new FakeProvider(() => [
+      {
+        type: 'text',
+        text: JSON.stringify([
+          { content: 'Has Blender installed locally' },
+          { content: 'Interested in macroeconomics and oil prices' },
+          { content: 'Prefers metric units' },
+          { content: 'Wants answers without emoji' },
+          { content: 'Lives in Gothenburg' },
+        ]),
+      },
+    ]);
+    const { repos, settings, memory } = setup(provider);
+    await settings.set('memory', { useByDefault: true, autoSuggest: true, suggestionModel: { provider: 'openrouter', model: 'cheap' }, maxInjected: 50 });
+    const base = { category: 'general', enabled: true, source: 'suggested', scope: null, sourceConversationId: null };
+    await repos.memories.create({ ...base, content: 'Uses Blender for 3D modeling, with Blender installed locally', status: 'rejected' });
+    await repos.memories.create({ ...base, content: 'Interested in macroeconomics and financial markets, such as oil prices', status: 'pending' });
+
+    const exchange = [
+      { role: 'user' as const, content: 'Convert 5 miles, please' },
+      { role: 'assistant' as const, content: 'That is 8 km. The sandbox has Python 3.12.' },
+    ];
+    expect(await memory.suggest('c1', exchange)).toBe(2);
+    const added = await repos.memories.findMany({ where: { status: 'pending', sourceConversationId: 'c1' } });
+    // The two echoes are dropped without using up the cap; the cap then stops after two new facts.
+    expect(added.map((row) => row.content).toSorted()).toEqual(['Prefers metric units', 'Wants answers without emoji']);
+
+    const sent = provider.requests[0]?.messages[0]?.content ?? '';
+    expect(sent).toContain('Facts the user rejected. Never suggest these or anything like them:\n- Uses Blender for 3D modeling');
+    expect(sent).toContain("The user's message, the only evidence you may use:\nConvert 5 miles, please");
+    expect(sent).toContain("The assistant's reply, for context only:\nThat is 8 km.");
+  });
+
+  it('scores rewordings of one fact high and unrelated facts low', () => {
+    expect(resemblance('Has Blender installed locally', 'Uses Blender for 3D modeling, with Blender installed locally')).toBe(1);
+    expect(resemblance('Prefers TypeScript over JavaScript', 'Prefers Python over JavaScript')).toBe(0);
+    expect(resemblance('Prefers answers in British English', 'Prefers the assistant to run code rather than reason about it')).toBeLessThan(0.3);
   });
 
   it('finds near-duplicate memories', async () => {

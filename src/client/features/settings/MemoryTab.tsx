@@ -44,7 +44,7 @@ export function MemoryTab() {
         </SettingRow>
         <SettingRow
           label="Suggest new memories"
-          description="After each reply in a chat with memory on, a model reads the exchange and proposes facts for you to keep or dismiss."
+          description="After each reply in a chat with memory on, a model reads what you wrote and proposes at most two lasting facts for you to keep or dismiss. It stays quiet most of the time, and never repeats a fact you’ve already seen."
         >
           <Switch
             checked={memory.autoSuggest}

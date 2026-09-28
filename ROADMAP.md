@@ -14,6 +14,7 @@ _server done_ have their API and tests in place and are waiting for their UI.
 - **Phase F (workspaces):** done
 - **Phase G (image generation):** mostly done
 - **Phase H (text to speech):** planned
+- **Phase I (projects):** planned
 
 ## A. Agents and tools
 
@@ -73,6 +74,12 @@ _server done_ have their API and tests in place and are waiting for their UI.
 - [x] **C3. Duplicates, conflicts and history**. The Memory page lists near-duplicates and runs a conflict check
       with the suggestion model; keeping one memory forgets the other. Each memory's history shows changes word by
       word, deleting an active memory moves it to Forgotten, and exports include history.
+- [x] **C4. Stricter suggestions** (S). Suggestions were mostly noise: task leftovers (a puzzle's answer, image
+      sizes), facts about the sandbox lifted from replies ("has Python available"), and interests inferred from one
+      question. Now only the user's message is evidence and the reply is labeled context; the prompt tests whether
+      a fact would help in an unrelated chat a month later; recent dismissals are shown as examples to avoid; and
+      `resemblance()` drops any suggestion worded like a memory already stored in any status. At most two survive
+      per exchange.
 
 ## D. Security and robustness
 
@@ -175,3 +182,35 @@ now sit behind its newer Interactions API rather than `generateContent`.
       a dedicated pane.
 - [ ] **H5. Gemini TTS directly** (M). Through the Interactions API with `GEMINI_API_KEY`. Only worth it if
       OpenRouter's Gemini TTS route turns out to lack its style and multi-speaker options.
+
+## I. Projects
+
+A project groups chats about one piece of work, with its own memories and instructions. It sits beside
+profiles rather than replacing them: a profile is *how* the assistant behaves (prompt, tools, parameters), a
+project is *what* the chat is about. A Blender car scene is a project, not a profile, so profile-scoped memory
+(C2) doesn't fit it. Most memories still get in on purpose, by asking a model to remember or on the Memory page;
+projects mainly decide where each one applies.
+
+- [ ] **I1. Projects and chats** (M). A `projects` table: name, instructions (added to the system prompt after
+      the profile's), optional bound folder, default panes and profile, created and updated dates. Conversations
+      get a nullable `projectId`. Branches inherit it; imports keep it only when the project exists.
+- [ ] **I2. Memory scope** (M). A memory applies everywhere, to one project, or to one profile. Store it in the
+      existing `scope` column as `project:<id>` or `profile:<id>`, with a migration that prefixes today's profile
+      ids. `activeFacts` takes global memories plus the chat's project and each pane's profile. Deleting a project
+      asks whether its memories become global or are forgotten.
+- [ ] **I3. Memory tools know the project** (S). In a project chat, `memory_save` saves to the project unless
+      the model passes `scope: "global"` for a fact about the user in general ("remember I prefer metric" is
+      global; "remember the car is a Jesko" is the project's). The tool result says which scope it used, so the
+      reply can say so.
+- [ ] **I4. Suggestions pick a scope** (S). In a project chat, the suggestion model returns `scope` with each
+      fact and defaults to the project. Outside a project, a fact that only fits one line of work is skipped
+      rather than saved globally.
+- [ ] **I5. UI** (M). A Projects section in the sidebar with chats grouped under it; "New chat in project"
+      starts from the project's defaults; the chat header shows the project and can move the chat. The Memory
+      page filters by scope, and `ScopeButton` lists projects beside profiles.
+- [ ] **I6. Workspace from the project** (S). A project with a bound folder gives each of its chats that folder
+      as the workspace (F6), so project chats share files without binding each one.
+- [ ] **I7. Relevance, not only scope** (M, later). Today every in-scope memory goes into the prompt until
+      `maxInjected` is reached. Once projects keep the global list small, a minimum relevance score (or
+      embeddings, C1) could leave out memories unrelated to the message.
+
