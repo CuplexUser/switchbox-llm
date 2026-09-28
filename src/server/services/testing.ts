@@ -40,6 +40,7 @@ export function fakeRegistry(provider: Provider): ProviderRegistry {
     build: async () => provider,
     cachedModel: () => null,
     cachedModels: () => [],
+    models: async () => [],
   } as unknown as ProviderRegistry;
 }
 

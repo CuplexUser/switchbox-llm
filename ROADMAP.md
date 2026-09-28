@@ -13,7 +13,7 @@ _server done_ have their API and tests in place and are waiting for their UI.
 - **Phase E (quality):** done
 - **Phase F (workspaces):** done
 - **Phase G (image generation):** mostly done
-- **Phase H (text to speech):** planned
+- **Phase H (text to speech):** done, apart from speech costs (H6)
 - **Phase I (projects):** planned
 
 ## A. Agents and tools
@@ -167,21 +167,23 @@ now sit behind its newer Interactions API rather than `generateContent`.
 | OpenRouter `/audio/speech` | OpenAI, Gemini Flash TTS, Voxtral Mini TTS | voice, format (mp3 or pcm) |
 | Google Interactions API | `gemini-3.8-flash-tts`, `gemini-3.8-flash-lite-tts` | 30 voices, style prompts, inline tags such as `<laugh>`, two speakers; returns 24 kHz WAV |
 
-- [ ] **H1. Speech models as a pane type** (M). Add `kind: 'speech'` beside `'image'`. OpenRouter lists TTS
-      models with an audio output modality; OpenAI's list needs `tts` removed from `NON_CHAT_MODEL` and matched
-      like `OPENAI_IMAGE_MODEL`. The pane sends its latest user message as `input` and gets back a new
-      `{ type: 'audio' }` `ChatEvent`, stored through `AttachmentService`.
-- [ ] **H2. Audio attachments** (S). `AttachmentKind` gains `'audio'`, `classify()` learns the MP3/WAV/Ogg
-      signatures, and a reply shows an `<audio>` player with the same save menu as images. Audio is never sent
-      back to a model as history.
-- [ ] **H3. Speech options** (S). Voice, speed, format and a style instruction as `GenerationParams` fields,
+- [x] **H1. Speech models as a pane type** (M). Add `kind: 'speech'` beside `'image'`. OpenRouter lists TTS
+      models only when asked with `?output_modalities=speech`, so that listing is fetched too; OpenAI's are
+      matched by a `tts` id, like `OPENAI_IMAGE_MODEL`. The pane sends its latest user message as `input` and
+      gets back a new `{ type: 'audio' }` `ChatEvent`, stored through `AttachmentService`.
+- [x] **H2. Audio attachments** (S). `AttachmentKind` gains `'audio'`, `classify()` learns the MP3/WAV/Ogg
+      signatures (plus FLAC, AAC and M4A), and a reply shows an `<audio>` player with a save menu: the original,
+      or WAV converted in the browser. Audio is never sent back to a model as history, and can't be uploaded.
+- [x] **H3. Speech options** (S). Voice, speed, format and a style instruction as `GenerationParams` fields,
       shown for speech panes the way image options are for image panes. Voice lists differ per provider, so
       the field is a free-text combo box seeded with each provider's known voices.
-- [ ] **H4. Read a reply aloud** (M). A "Read aloud" action on any text reply that sends it to a chosen
+- [x] **H4. Read a reply aloud** (M). A "Read aloud" action on any text reply that sends it to a chosen
       speech model (a Settings → General default, like the title model). Probably more useful day to day than
       a dedicated pane.
-- [ ] **H5. Gemini TTS directly** (M). Through the Interactions API with `GEMINI_API_KEY`. Only worth it if
-      OpenRouter's Gemini TTS route turns out to lack its style and multi-speaker options.
+- [x] **H5. Gemini TTS directly** (M). Through the Interactions API with `GEMINI_API_KEY`, including style
+      notes and two-speaker scripts (`Name: line`). Two speakers are only sent this way, not through OpenRouter.
+- [ ] **H6. Speech costs** (S, later). None of the speech endpoints report a price, so speech replies and Read
+      aloud show nothing on the Usage page. Characters times a per-model list price would do.
 
 ## I. Projects
 

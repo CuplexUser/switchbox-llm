@@ -10,6 +10,7 @@ import type { MessageStore } from './services/messages.ts';
 import type { RunRegistry } from './services/runs.ts';
 import type { SearchService } from './services/search.ts';
 import type { SettingsService } from './services/settings.ts';
+import type { SpeechService } from './services/speech.ts';
 import type { UsageService } from './services/usage.ts';
 import type { WorkspaceService } from './services/workspaces.ts';
 import type { McpManager } from './tools/mcp.ts';
@@ -30,6 +31,7 @@ export interface Services {
   runs: RunRegistry;
   usage: UsageService;
   workspaces: WorkspaceService;
+  speech: SpeechService;
 }
 
 export function badRequest(message: string): HTTPException {

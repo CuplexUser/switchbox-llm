@@ -3,6 +3,7 @@ import ContentCopyRoundedIcon from '@mui/icons-material/ContentCopyRounded';
 import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined';
 import DownloadRoundedIcon from '@mui/icons-material/DownloadRounded';
 import ErrorOutlineRoundedIcon from '@mui/icons-material/ErrorOutlineRounded';
+import GraphicEqRoundedIcon from '@mui/icons-material/GraphicEqRounded';
 import ImageOutlinedIcon from '@mui/icons-material/ImageOutlined';
 import PictureAsPdfOutlinedIcon from '@mui/icons-material/PictureAsPdfOutlined';
 import Box from '@mui/material/Box';
@@ -19,11 +20,14 @@ import { useEffect, useState } from 'react';
 import type { AttachmentKind, AttachmentRef } from '../../../shared/types.ts';
 import {
   attachmentUrl,
+  audioLabel,
+  convertAudioToWav,
   convertImage,
   downloadBlob,
   formatBytes,
   IMAGE_FORMAT_LABELS,
   renameForFormat,
+  withExtension,
   type ImageFormat,
 } from '../../lib/files.ts';
 
@@ -45,7 +49,13 @@ function Thumb({ item }: { item: ChipItem }) {
   if (source && item.kind !== 'pdf' && item.kind !== 'text') {
     return <Box component="img" src={source} alt="" sx={{ width: 28, height: 28, objectFit: 'cover', borderRadius: '4px', flexShrink: 0 }} />;
   }
-  const Icon = item.error ? ErrorOutlineRoundedIcon : item.kind === 'pdf' ? PictureAsPdfOutlinedIcon : DescriptionOutlinedIcon;
+  const Icon = item.error
+    ? ErrorOutlineRoundedIcon
+    : item.kind === 'pdf'
+      ? PictureAsPdfOutlinedIcon
+      : item.kind === 'audio'
+        ? GraphicEqRoundedIcon
+        : DescriptionOutlinedIcon;
   return <Icon sx={{ fontSize: 20, color: item.error ? 'error.main' : 'var(--sb-text-faint)', flexShrink: 0 }} />;
 }
 
@@ -122,11 +132,15 @@ export function GeneratedImages({ attachments }: { attachments: AttachmentRef[] 
 
 const SAVE_FORMATS: ImageFormat[] = ['png', 'jpeg', 'webp'];
 
-function GeneratedImage({ image }: { image: AttachmentRef }) {
+type Status = { text: string; error: boolean } | null;
+
+/**
+ * A save or copy menu's state: where it's anchored, and a short-lived note on how the last action
+ * went. `run` closes the menu, then reports the action's message or error.
+ */
+function useSaveMenu() {
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
-  const [status, setStatus] = useState<{ text: string; error: boolean } | null>(null);
-  const url = attachmentUrl(image.id);
-  const original = SAVE_FORMATS.find((format) => image.mimeType === `image/${format}`);
+  const [status, setStatus] = useState<Status>(null);
 
   useEffect(() => {
     if (!status) return;
@@ -143,6 +157,23 @@ function GeneratedImage({ image }: { image: AttachmentRef }) {
       setStatus({ text: error instanceof Error ? error.message : String(error), error: true });
     }
   }
+
+  return { menuAnchor, setMenuAnchor, status, run };
+}
+
+function StatusNote({ status, width }: { status: Status; width: number }) {
+  if (!status) return null;
+  return (
+    <Typography variant="caption" component="div" role="status" sx={{ mt: 0.5, maxWidth: width, color: status.error ? 'error.main' : 'var(--sb-text-faint)' }}>
+      {status.text}
+    </Typography>
+  );
+}
+
+function GeneratedImage({ image }: { image: AttachmentRef }) {
+  const { menuAnchor, setMenuAnchor, status, run } = useSaveMenu();
+  const url = attachmentUrl(image.id);
+  const original = SAVE_FORMATS.find((format) => image.mimeType === `image/${format}`);
 
   const saveAs = (format: ImageFormat) =>
     run(async () => {
@@ -213,16 +244,61 @@ function GeneratedImage({ image }: { image: AttachmentRef }) {
           <ListItemText primary="Copy image" />
         </MenuItem>
       </Menu>
-      {status && (
-        <Typography
-          variant="caption"
-          component="div"
-          role="status"
-          sx={{ mt: 0.5, maxWidth: 320, color: status.error ? 'error.main' : 'var(--sb-text-faint)' }}
-        >
-          {status.text}
-        </Typography>
-      )}
+      <StatusNote status={status} width={320} />
+    </Box>
+  );
+}
+
+/** Speech a model generated, as a player with a save menu. */
+export function GeneratedAudio({ attachments }: { attachments: AttachmentRef[] }) {
+  const clips = attachments.filter((ref) => ref.kind === 'audio');
+  if (clips.length === 0) return null;
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mb: 1.25 }}>
+      {clips.map((ref) => (
+        <GeneratedClip key={ref.id} clip={ref} />
+      ))}
+    </Box>
+  );
+}
+
+function GeneratedClip({ clip }: { clip: AttachmentRef }) {
+  const { menuAnchor, setMenuAnchor, status, run } = useSaveMenu();
+  const url = attachmentUrl(clip.id);
+
+  const saveAsWav = () =>
+    run(async () => {
+      downloadBlob(withExtension(clip.name, 'wav'), await convertAudioToWav(url));
+      return null;
+    });
+
+  return (
+    <Box>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, maxWidth: 480 }}>
+        <Box component="audio" controls preload="metadata" src={url} aria-label={clip.name} sx={{ flex: 1, minWidth: 0, height: 40 }} />
+        <Tooltip title="Save">
+          <IconButton aria-label={`Save ${clip.name}`} aria-haspopup="menu" size="small" onClick={(event) => setMenuAnchor(event.currentTarget)}>
+            <DownloadRoundedIcon sx={{ fontSize: 18 }} />
+          </IconButton>
+        </Tooltip>
+      </Box>
+      <Menu anchorEl={menuAnchor} open={Boolean(menuAnchor)} onClose={() => setMenuAnchor(null)}>
+        <MenuItem component="a" href={url} download={clip.name} onClick={() => setMenuAnchor(null)}>
+          <ListItemIcon>
+            <DownloadRoundedIcon fontSize="small" />
+          </ListItemIcon>
+          <ListItemText primary="Save original" secondary={`${audioLabel(clip.mimeType)} · ${formatBytes(clip.size)}`} />
+        </MenuItem>
+        {clip.mimeType !== 'audio/wav' && (
+          <MenuItem onClick={() => void saveAsWav()}>
+            <ListItemIcon>
+              <GraphicEqRoundedIcon fontSize="small" />
+            </ListItemIcon>
+            <ListItemText primary="Save as WAV" secondary="Uncompressed, opens anywhere" />
+          </MenuItem>
+        )}
+      </Menu>
+      <StatusNote status={status} width={480} />
     </Box>
   );
 }

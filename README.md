@@ -8,6 +8,8 @@ in parallel.
 - **Image generation:** point a pane at an image model (Nano Banana and other Gemini image models, gpt-image-1,
   dall-e) and sending it a prompt generates an image instead of streaming text. See
   [Image generation](#image-generation)
+- **Text to speech:** a pane on a speech model reads each message aloud and answers with audio, and any reply
+  can be read aloud with a speech model you choose. See [Text to speech](#text-to-speech)
 - **Comparison:** up to 4 panes per chat, each with its own stop button and a regenerate action; a
   single composer can target all panes or only some. "Compare replies" shows each exchange's speed, tokens and
   cost with totals, and a word-level diff of any two panes. One reply per exchange can be marked as the best
@@ -57,7 +59,7 @@ API keys go in `.env` and stay on the local server:
 | `OPENROUTER_API_KEY` | OpenRouter |
 | `OPENAI_API_KEY` | OpenAI |
 | `ANTHROPIC_API_KEY` | Anthropic |
-| `GEMINI_API_KEY` | Google (Nano Banana and other Gemini image models) |
+| `GEMINI_API_KEY` | Google (Nano Banana and other Gemini image models, Gemini TTS) |
 | `CUSTOM_API_KEY` | Optional key for a custom OpenAI-compatible endpoint |
 | `TAVILY_API_KEY` | Web search through Tavily |
 | `BRAVE_API_KEY` | Web search through Brave Search |
@@ -100,6 +102,38 @@ OpenAI's image models don't support this: they only take a text prompt.
 A few limitations: the image appears all at once when generation finishes rather than streaming in, a pane
 doesn't automatically feed its own earlier image back in for a follow-up edit (re-attach it to do that), and
 cost is only reported for OpenRouter — Google and OpenAI image replies show "no price" on the Usage page.
+
+## Text to speech
+
+A pane set to a speech model reads each message you send aloud. The reply is an audio player with a save
+button that offers the original file or a WAV copy converted in the browser. Speech models are marked
+"Speech" in the model picker. They come from three places:
+
+- **OpenAI**: `gpt-4o-mini-tts`, `tts-1` and `tts-1-hd`
+- **OpenRouter**: every model it lists as speech output, such as Gemini Flash TTS, Voxtral, MAI-Voice and Grok
+  Voice. OpenRouter leaves these out of its main model list, so Switchbox asks for them separately
+- **Google**, directly: `gemini-3.8-flash-tts` and `gemini-3.8-flash-lite-tts` through Google's Interactions
+  API. Turn the Google provider on under Settings → Providers
+
+Voice, speed, format and style are set under Settings → Generation as defaults and per pane in the pane's
+settings. The voice field suggests each provider's known voices and accepts any other name. A voice meant for a
+different provider, such as `alloy` on a Gemini model, is replaced with that model's default, so one default
+voice doesn't break other providers. The style ("calm and warm, unhurried") goes to OpenAI's `instructions`,
+Gemini's style note, and OpenRouter's per-provider options; `tts-1` ignores it. Gemini has no numeric speed, so
+a speed below 0.9 or above 1.1 becomes "speaking slowly" or "speaking quickly" in its style. OpenRouter returns
+MP3 or raw PCM, which Switchbox wraps as WAV.
+
+With Google directly, a message written as a script with two speakers, one `Name: line` per line, is read as
+a conversation using the first and second voice. Inline tags such as `<laugh>` and `<sigh>` pass straight
+through.
+
+**Read aloud.** Choose a speech model under Settings → General and every text reply gets a Read aloud button.
+Markdown is cleaned up first: code blocks and tables are announced rather than read out, and formatting marks
+are dropped. Long replies are spoken in pieces of up to 4,000 characters and joined into one file, up to
+40,000 characters. Audio is kept in the browser for the session, so reading a reply again doesn't pay twice.
+
+Audio is never sent back to a model as history, and audio files can't be attached to a message. Speech costs
+aren't on the Usage page yet, since none of these endpoints report a price.
 
 ## Web search
 
@@ -322,12 +356,12 @@ src/
   shared/    Types, defaults and the SSE parser used by both sides
   server/    Hono API
     db/         repolayer schemas and repos (one table per repo), column additions, versioned migrations
-    providers/  OpenAI-compatible and Anthropic streaming adapters (tool calls, native search, attachments,
-                reasoning settings, prompt caching, retries)
+    providers/  OpenAI-compatible, Anthropic and Google adapters (tool calls, native search, attachments,
+                reasoning settings, prompt caching, retries, image and speech output)
     tools/      tool registry, argument checks, approval policies, built-in tools and MCP servers
     web/        Tavily and Brave search, safe page fetching
     services/   chat runs and the tool loop, message storage and history, attachments, workspaces and
-                commands, ZIP archives, memory, search, usage reports, settings
+                commands, ZIP archives, memory, search, usage reports, settings, read aloud
     routes/     REST endpoints and the /api/chat/stream SSE endpoint
   client/    React 19, MUI 9, TanStack Query, Zustand
     features/   chat, memory, settings, usage

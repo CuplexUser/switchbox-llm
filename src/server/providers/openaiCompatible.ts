@@ -1,6 +1,8 @@
 import { parseSse } from '../../shared/sse.ts';
-import { PROVIDER_LABELS, type GenerationParams, type ModelInfo, type ProviderId, type ReasoningEffort } from '../../shared/types.ts';
+import { AUDIO_MIME_TYPES, speechFamily, speechFormats, voiceFor } from '../../shared/speech.ts';
+import { PROVIDER_LABELS, type AudioFormat, type GenerationParams, type ModelInfo, type ProviderId, type ReasoningEffort } from '../../shared/types.ts';
 import { attachmentText, nearestEffort } from './anthropic.ts';
+import { pcmFormat, pcmToWav } from './audio.ts';
 import {
   errorFromResponse,
   joinUrl,
@@ -12,6 +14,7 @@ import {
   type LoopAttachment,
   type LoopMessage,
   type Provider,
+  speechInput,
   type ToolCall,
 } from './types.ts';
 
@@ -174,6 +177,42 @@ export function openAiImageFields(model: string, params: GenerationParams): Reco
   return fields;
 }
 
+/**
+ * The body for an OpenAI-style `POST /audio/speech`, and the format the reply comes back in.
+ * OpenRouter only returns MP3 or raw PCM, so WAV is asked for as PCM and wrapped afterwards. Style
+ * instructions go straight to OpenAI's newer models, and through OpenRouter's per-provider options
+ * where the upstream takes one.
+ */
+export function speechRequest(
+  id: ProviderId,
+  model: string,
+  input: string,
+  params: GenerationParams,
+): { body: Record<string, unknown>; format: AudioFormat; wrapPcm: boolean } {
+  const ref = { provider: id, model };
+  const format = params.audioFormat && speechFormats(ref).includes(params.audioFormat) ? params.audioFormat : 'mp3';
+  const wrapPcm = id === 'openrouter' && format === 'wav';
+  const body: Record<string, unknown> = { model, input, response_format: wrapPcm ? 'pcm' : format };
+  const voice = voiceFor(ref, params.voice);
+  if (voice) body.voice = voice;
+  if (params.speechSpeed !== null) body.speed = params.speechSpeed;
+  const style = params.speechStyle?.trim();
+  if (style) {
+    const family = speechFamily(ref);
+    if (id === 'openai') {
+      // tts-1 and tts-1-hd reject instructions.
+      if (!/^tts-1/i.test(model)) body.instructions = style;
+    } else if (id === 'openrouter' && family === 'openai') {
+      body.provider = { options: { openai: { instructions: style } } };
+    } else if (id === 'openrouter' && family === 'google') {
+      body.provider = { options: { google: { speech_metadata: { style } } } };
+    } else if (id === 'openrouter' && family === 'microsoft') {
+      body.provider = { options: { azure: { style } } };
+    }
+  }
+  return { body, format, wrapPcm };
+}
+
 export function toOpenAiMessages(system: string, messages: LoopMessage[]): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = system ? [{ role: 'system', content: system }] : [];
   for (const message of messages) {
@@ -211,15 +250,32 @@ const NON_CHAT_MODEL = /embed|whisper|tts|moderation|transcribe|audio|realtime|c
 /** OpenAI's own image models: not chat-completions models, handled through /images/generations instead. */
 const OPENAI_IMAGE_MODEL = /^(gpt-image-\d|dall-e-\d)/i;
 
-function kindOf(provider: ProviderId, model: RawModel): 'image' | undefined {
-  if (provider === 'openai') return OPENAI_IMAGE_MODEL.test(model.id) ? 'image' : undefined;
-  if (provider === 'openrouter') return model.architecture?.output_modalities?.includes('image') ? 'image' : undefined;
+/** OpenAI's speech models, which the chat-model filter would otherwise drop with the other audio models. */
+const OPENAI_SPEECH_MODEL = /(^|-)tts(-|$)/i;
+
+function kindOf(provider: ProviderId, model: RawModel): 'image' | 'speech' | undefined {
+  if (provider === 'openai') {
+    if (OPENAI_IMAGE_MODEL.test(model.id)) return 'image';
+    return OPENAI_SPEECH_MODEL.test(model.id) ? 'speech' : undefined;
+  }
+  if (provider === 'openrouter') {
+    const outputs = model.architecture?.output_modalities ?? [];
+    if (outputs.includes('speech')) return 'speech';
+    return outputs.includes('image') ? 'image' : undefined;
+  }
   return undefined;
 }
 
 export function mapModels(provider: ProviderId, data: RawModel[]): ModelInfo[] {
+  const seen = new Set<string>();
   return data
-    .filter((model) => provider !== 'openai' || OPENAI_IMAGE_MODEL.test(model.id) || !NON_CHAT_MODEL.test(model.id))
+    .filter((model) => provider !== 'openai' || OPENAI_IMAGE_MODEL.test(model.id) || OPENAI_SPEECH_MODEL.test(model.id) || !NON_CHAT_MODEL.test(model.id))
+    // OpenRouter's speech models come from a second listing, which can overlap the first.
+    .filter((model) => {
+      if (seen.has(model.id)) return false;
+      seen.add(model.id);
+      return true;
+    })
     .map((model) => {
       const input = Number(model.pricing?.prompt);
       const output = Number(model.pricing?.completion);
@@ -273,10 +329,28 @@ export class OpenAiCompatibleProvider implements Provider {
     });
     if (!response.ok) throw await errorFromResponse(this.label, response);
     const body = (await response.json()) as { data?: RawModel[] };
-    return mapModels(this.id, body.data ?? []);
+    return mapModels(this.id, [...(await this.listSpeechModels(signal)), ...(body.data ?? [])]);
+  }
+
+  /** OpenRouter leaves speech models out of its default list, so they are asked for separately. */
+  private async listSpeechModels(signal?: AbortSignal): Promise<RawModel[]> {
+    if (this.id !== 'openrouter') return [];
+    try {
+      const response = await providerFetch(this.label, joinUrl(this.baseUrl, 'models?output_modalities=speech'), { headers: this.headers(), signal });
+      if (!response.ok) return [];
+      const body = (await response.json()) as { data?: RawModel[] };
+      // Tagged here in case the listing leaves the modality out.
+      return (body.data ?? []).map((model) => ({ ...model, architecture: { ...model.architecture, output_modalities: ['speech'] } }));
+    } catch {
+      return [];
+    }
   }
 
   async *streamChat(request: ChatRequest): AsyncIterable<ChatEvent> {
+    if (request.speechOutput) {
+      yield* this.streamSpeech(request);
+      return;
+    }
     if (this.id === 'openai' && request.imageOutput) {
       yield* this.streamOpenAiImage(request);
       return;
@@ -343,6 +417,32 @@ export class OpenAiCompatibleProvider implements Provider {
       if (!call.name) continue;
       yield { type: 'tool_call', call: { ...call, id: call.id || `call_${index}` } };
     }
+  }
+
+  /** Text to speech through `/audio/speech`, which answers with the audio file's bytes. */
+  private async *streamSpeech(request: ChatRequest): AsyncIterable<ChatEvent> {
+    const input = speechInput(request.messages);
+    if (!input) throw new ProviderError('There is no text to read aloud.');
+    const { body, format, wrapPcm } = speechRequest(this.id, request.model, input, request.params);
+    const response = await providerFetch(this.label, joinUrl(this.baseUrl, 'audio/speech'), {
+      method: 'POST',
+      headers: this.headers(),
+      body: JSON.stringify(body),
+      signal: request.signal,
+    });
+    if (!response.ok) throw await errorFromResponse(this.label, response);
+    const contentType = response.headers.get('content-type') ?? '';
+    // Some upstreams report a failure as JSON under a 200.
+    if (contentType.includes('json')) throw await errorFromResponse(this.label, new Response(await response.text(), { status: 502 }));
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (bytes.byteLength === 0) throw new ProviderError(`${this.label} returned no audio`);
+    if (wrapPcm || contentType.includes('audio/pcm')) {
+      const { sampleRate, channels } = pcmFormat(contentType);
+      yield { type: 'audio', mimeType: 'audio/wav', data: pcmToWav(bytes, sampleRate, channels).toString('base64') };
+    } else {
+      yield { type: 'audio', mimeType: AUDIO_MIME_TYPES[format], data: bytes.toString('base64') };
+    }
+    yield { type: 'finish', reason: 'stop' };
   }
 
   /** OpenAI's own image models (gpt-image-1, dall-e) are a separate, non-chat, non-streaming endpoint. */

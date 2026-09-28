@@ -6,6 +6,7 @@ import type { Repos } from './db/repos.ts';
 import { createLogger } from './log.ts';
 import { config } from './env.ts';
 import { ProviderRegistry } from './providers/registry.ts';
+import { ProviderError } from './providers/types.ts';
 import { attachmentRoutes } from './routes/attachments.ts';
 import { chatRoutes } from './routes/chat.ts';
 import { conversationRoutes } from './routes/conversations.ts';
@@ -14,6 +15,7 @@ import { memoryRoutes } from './routes/memories.ts';
 import { promptRoutes } from './routes/prompts.ts';
 import { searchRoutes } from './routes/search.ts';
 import { settingsRoutes } from './routes/settings.ts';
+import { speechRoutes } from './routes/speech.ts';
 import { usageRoutes } from './routes/usage.ts';
 import { workspaceRoutes } from './routes/workspace.ts';
 import { localOnly } from './security.ts';
@@ -26,6 +28,7 @@ import { MessageStore } from './services/messages.ts';
 import { RunRegistry } from './services/runs.ts';
 import { SearchService } from './services/search.ts';
 import { SettingsService } from './services/settings.ts';
+import { SpeechService } from './services/speech.ts';
 import { UsageService } from './services/usage.ts';
 import { WorkspaceError, WorkspaceService } from './services/workspaces.ts';
 import { codeTools } from './tools/code.ts';
@@ -67,7 +70,8 @@ export function createServices(
   const chat = new ChatService({ repos, settings, providers: registry, memory, tools, store, attachments, approvals, workspaces });
   const usage = new UsageService(repos, registry);
   const runs = new RunRegistry();
-  return { repos, settings, registry, memory, store, attachments, search, tools, mcp, approvals, chat, runs, usage, workspaces };
+  const speech = new SpeechService(settings, registry);
+  return { repos, settings, registry, memory, store, attachments, search, tools, mcp, approvals, chat, runs, usage, workspaces, speech };
 }
 
 export function createApi(services: Services): Hono {
@@ -85,6 +89,7 @@ export function createApi(services: Services): Hono {
   api.route('/', searchRoutes(services));
   api.route('/', dataRoutes(services));
   api.route('/', usageRoutes(services));
+  api.route('/', speechRoutes(services));
 
   api.notFound((c) => c.json({ error: 'Not found' }, 404));
   api.onError((error, c) => {
@@ -94,6 +99,8 @@ export function createApi(services: Services): Hono {
     if (error instanceof NotFoundError) return c.json({ error: error.message }, 404);
     if (error instanceof UniqueConstraintError) return c.json({ error: error.message }, 409);
     if (error instanceof QueryError) return c.json({ error: error.message }, 400);
+    // A provider that failed or refused: the request was fine, the upstream wasn't.
+    if (error instanceof ProviderError) return c.json({ error: error.message }, 502);
     log.error('unhandled error', { method: c.req.method, path: c.req.path, error: error.stack ?? error.message });
     return c.json({ error: 'Internal server error' }, 500);
   });

@@ -21,8 +21,8 @@ export interface ModelInfo extends ModelRef {
   contextLength?: number;
   /** USD per million tokens. */
   pricing?: { input: number; output: number };
-  /** Image-generation models answer with an image attachment instead of streamed text. */
-  kind?: 'image';
+  /** Image-generation models answer with an image attachment instead of streamed text; speech models with audio. */
+  kind?: 'image' | 'speech';
 }
 
 /** How hard a reasoning model thinks. Providers that offer fewer levels get the nearest one. */
@@ -43,6 +43,16 @@ export interface GenerationParams {
   imageSize: ImageSize | null;
   /** Image models only. Rendering quality, for OpenAI's image models. */
   imageQuality: ImageQuality | null;
+  /** Speech models only. A voice name, which differs per provider (alloy, Kore, …). */
+  voice: string | null;
+  /** Speech models only. The second speaker's voice, for two-speaker scripts on Gemini TTS. */
+  secondVoice: string | null;
+  /** Speech models only. 0.25 to 4, for models with a speed setting. */
+  speechSpeed: number | null;
+  /** Speech models only. How to speak: tone, pace, accent ("calm and warm"). */
+  speechStyle: string | null;
+  /** Speech models only. The file format to ask for. */
+  audioFormat: AudioFormat | null;
 }
 
 export const ASPECT_RATIOS = ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'] as const;
@@ -51,6 +61,8 @@ export const IMAGE_SIZES = ['1K', '2K', '4K'] as const;
 export type ImageSize = (typeof IMAGE_SIZES)[number];
 export const IMAGE_QUALITIES = ['low', 'medium', 'high'] as const;
 export type ImageQuality = (typeof IMAGE_QUALITIES)[number];
+export const AUDIO_FORMATS = ['mp3', 'wav', 'opus', 'aac', 'flac'] as const;
+export type AudioFormat = (typeof AUDIO_FORMATS)[number];
 
 export type ThemeMode = 'system' | 'light' | 'dark';
 export type ChatFontSize = 'small' | 'medium' | 'large' | 'xlarge';
@@ -101,6 +113,8 @@ export interface AppSettings {
     sendOnEnter: boolean;
     /** Writes chat titles. Null titles chats from the first line of the first message. */
     titleModel: ModelRef | null;
+    /** Reads replies aloud. Null hides the Read aloud action. */
+    speechModel: ModelRef | null;
     /** Id from CHAT_FONTS used for assistant reply and reasoning text. */
     chatFont: string;
     chatFontSize: ChatFontSize;
@@ -263,7 +277,8 @@ export interface MessageActivity {
   sources: Source[];
 }
 
-export type AttachmentKind = 'image' | 'pdf' | 'text';
+/** audio: speech a model generated. Shown as a player and never sent back to a model. */
+export type AttachmentKind = 'image' | 'pdf' | 'text' | 'audio';
 
 export interface AttachmentRef {
   id: string;

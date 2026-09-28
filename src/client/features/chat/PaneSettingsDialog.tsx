@@ -8,10 +8,11 @@ import MenuItem from '@mui/material/MenuItem';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import { useState } from 'react';
-import { isImageModel } from '../../../shared/defaults.ts';
+import { isImageModel, isSpeechModel } from '../../../shared/defaults.ts';
+import { speechFormats, speechVoices } from '../../../shared/speech.ts';
 import type { GenerationParams, Pane } from '../../../shared/types.ts';
 import { useModels, usePrompts, useSettings, useUpdatePane } from '../../api/hooks.ts';
-import { ImageParamsFields, ParamsFields } from '../settings/ParamsFields.tsx';
+import { ImageParamsFields, ParamsFields, SpeechParamsFields } from '../settings/ParamsFields.tsx';
 
 export function PaneSettingsDialog({ pane, open, onClose }: { pane: Pane; open: boolean; onClose: () => void }) {
   return (
@@ -31,10 +32,9 @@ function PaneSettingsForm({ pane, onClose }: { pane: Pane; onClose: () => void }
   const [params, setParams] = useState<Partial<GenerationParams>>(pane.params);
 
   const preset = prompts.data?.find((prompt) => prompt.id === promptId);
-  const imagePane = isImageModel(
-    pane,
-    models.data?.models.find((model) => model.provider === pane.provider && model.model === pane.model),
-  );
+  const listed = models.data?.models.find((model) => model.provider === pane.provider && model.model === pane.model);
+  const imagePane = isImageModel(pane, listed);
+  const speechPane = isSpeechModel(pane, listed);
 
   function save(): void {
     updatePane.mutate(
@@ -52,7 +52,8 @@ function PaneSettingsForm({ pane, onClose }: { pane: Pane; onClose: () => void }
     <>
       <DialogTitle>Pane settings</DialogTitle>
       <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2.5, pt: '8px !important' }}>
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+        {/* A speech model reads the message as written, so it has no use for a prompt. */}
+        <Box sx={{ display: speechPane ? 'none' : 'flex', flexDirection: 'column', gap: 1.5 }}>
           <Typography variant="subtitle2">System prompt</Typography>
           <TextField
             select
@@ -88,13 +89,32 @@ function PaneSettingsForm({ pane, onClose }: { pane: Pane; onClose: () => void }
             <ImageParamsFields value={params} onChange={setParams} placeholders={settings.data?.generation} />
           </Box>
         )}
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-          <Typography variant="subtitle2">Generation</Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: -1 }}>
-            Leave a field empty to use the default from Settings.
-          </Typography>
-          <ParamsFields value={params} onChange={setParams} placeholders={settings.data?.generation} />
-        </Box>
+        {speechPane && (
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+            <Typography variant="subtitle2">Speech</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: -1 }}>
+              Each message you send is read aloud. Leave a field empty to use the default from Settings.
+            </Typography>
+            <SpeechParamsFields
+              value={params}
+              onChange={setParams}
+              placeholders={settings.data?.generation}
+              voices={speechVoices(pane)}
+              defaultVoices={speechVoices(pane).slice(0, 2)}
+              formats={speechFormats(pane)}
+              twoSpeakers={pane.provider === 'google'}
+            />
+          </Box>
+        )}
+        {!speechPane && (
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+            <Typography variant="subtitle2">Generation</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: -1 }}>
+              Leave a field empty to use the default from Settings.
+            </Typography>
+            <ParamsFields value={params} onChange={setParams} placeholders={settings.data?.generation} />
+          </Box>
+        )}
         {updatePane.error && (
           <Typography variant="body2" color="error">
             {updatePane.error.message}

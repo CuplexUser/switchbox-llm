@@ -8,23 +8,29 @@ import ExpandMoreRoundedIcon from '@mui/icons-material/ExpandMoreRounded';
 import ReplayRoundedIcon from '@mui/icons-material/ReplayRounded';
 import StarBorderRoundedIcon from '@mui/icons-material/StarBorderRounded';
 import StarRoundedIcon from '@mui/icons-material/StarRounded';
+import StopRoundedIcon from '@mui/icons-material/StopRounded';
+import VolumeUpRoundedIcon from '@mui/icons-material/VolumeUpRounded';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import ButtonBase from '@mui/material/ButtonBase';
+import CircularProgress from '@mui/material/CircularProgress';
 import Collapse from '@mui/material/Collapse';
 import IconButton from '@mui/material/IconButton';
 import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { memo, useState } from 'react';
+import { modelKey } from '../../../shared/defaults.ts';
 import type { ApprovalRequest, Message } from '../../../shared/types.ts';
+import { useSettings } from '../../api/hooks.ts';
 import { Markdown } from '../../components/Markdown.tsx';
 import { formatCost, formatMs, formatTokens, shortModel, tokensPerSecond } from '../../lib/format.ts';
 import { useChatStore, type LiveReply, type QueuedSend } from '../../stores/chat.ts';
+import { toggleSpeaking, useSpeechStore } from '../../stores/speech.ts';
 import { fonts } from '../../theme/theme.ts';
 import { ActivityLog } from './ActivityLog.tsx';
-import { AttachmentChips, GeneratedImages } from './AttachmentChips.tsx';
+import { AttachmentChips, GeneratedAudio, GeneratedImages } from './AttachmentChips.tsx';
 
 const FINISH_NOTES: Record<string, string> = {
   aborted: 'Stopped',
@@ -347,6 +353,35 @@ function Meta({ message, showModel }: { message: Message; showModel: boolean }) 
   );
 }
 
+/** Reads a reply aloud with the speech model from Settings → General. Hidden until one is chosen. */
+function ReadAloudButton({ message }: { message: Message }) {
+  const speechModel = useSettings().data?.general.speechModel;
+  const key = speechModel ? `${message.id}:${modelKey(speechModel)}` : '';
+  const phase = useSpeechStore((state) => (state.key === key ? state.phase : null));
+  const error = useSpeechStore((state) => state.errors[key]);
+  if (!speechModel) return null;
+  const title = phase === 'loading' ? 'Preparing audio… Click to cancel' : phase === 'playing' ? 'Stop reading' : (error ?? 'Read aloud');
+  return (
+    <Tooltip title={title}>
+      <IconButton
+        size="small"
+        aria-label={phase ? 'Stop reading aloud' : 'Read aloud'}
+        aria-pressed={Boolean(phase)}
+        onClick={() => void toggleSpeaking(key, message.content)}
+        sx={{ color: error && !phase ? 'error.main' : undefined }}
+      >
+        {phase === 'loading' ? (
+          <CircularProgress size={14} />
+        ) : phase === 'playing' ? (
+          <StopRoundedIcon sx={{ fontSize: 17 }} />
+        ) : (
+          <VolumeUpRoundedIcon sx={{ fontSize: 17 }} />
+        )}
+      </IconButton>
+    </Tooltip>
+  );
+}
+
 export const AssistantMessage = memo(function AssistantMessage({
   message,
   paneModel,
@@ -377,6 +412,7 @@ export const AssistantMessage = memo(function AssistantMessage({
       {message.reasoning && <Reasoning text={message.reasoning} />}
       {message.activity && <ActivityLog items={message.activity.items} sources={message.activity.sources} />}
       {message.attachments && <GeneratedImages attachments={message.attachments} />}
+      {message.attachments && <GeneratedAudio attachments={message.attachments} />}
       {message.content && <Markdown text={message.content} />}
       {message.error && (
         <Alert
@@ -446,6 +482,7 @@ export const AssistantMessage = memo(function AssistantMessage({
               </IconButton>
             </Tooltip>
           )}
+          {message.content && <ReadAloudButton message={message} />}
           {message.content && (
             <Tooltip title={copied ? 'Copied' : 'Copy reply'}>
               <IconButton

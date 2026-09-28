@@ -240,6 +240,15 @@ export function ModelPicker({ anchorEl, open, onClose, onSelect, selected }: Mod
                       Image
                     </Typography>
                   )}
+                  {model.kind === 'speech' && (
+                    <Typography
+                      variant="caption"
+                      title="Reads your message aloud and answers with audio"
+                      sx={{ px: 0.75, borderRadius: '4px', border: '1px solid var(--sb-border-strong)' }}
+                    >
+                      Speech
+                    </Typography>
+                  )}
                   {model.contextLength && <Typography variant="caption">{formatContext(model.contextLength)}</Typography>}
                   {model.pricing && (
                     <Typography variant="caption" title="Input / output price per million tokens">

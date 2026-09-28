@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { isImageModel, mergeParams } from '../../shared/defaults.ts';
+import { isImageModel, isSpeechModel, mergeParams } from '../../shared/defaults.ts';
 import type {
   ActivityItem,
   AppSettings,
@@ -483,9 +483,11 @@ export class ChatService {
 
       let web = assembled.web;
       let tools = assembled.tools;
-      // Image models answer with a generated attachment, not tool use or web search.
-      const imageOutput = isImageModel({ provider: assembled.provider, model: pane.model }, providers.cachedModel(assembled.provider, pane.model));
-      if (imageOutput) {
+      // Image and speech models answer with a generated attachment, not tool use or web search.
+      const listed = providers.cachedModel(assembled.provider, pane.model);
+      const imageOutput = isImageModel({ provider: assembled.provider, model: pane.model }, listed);
+      const speechOutput = isSpeechModel({ provider: assembled.provider, model: pane.model }, listed);
+      if (imageOutput || speechOutput) {
         tools = [];
         web = { search: null, fetch: false, nativeSearch: false, resolved: 'none', note: null };
       }
@@ -525,6 +527,7 @@ export class ChatService {
             tools: tools.map((tool) => tool.spec),
             nativeSearch: web.nativeSearch,
             imageOutput,
+            speechOutput,
           },
           {
             draft,
@@ -723,13 +726,15 @@ export class ChatService {
           case 'assistant_raw':
             result.raw = event.content;
             break;
-          case 'image': {
+          case 'image':
+          case 'audio': {
             sink.onFirstToken();
             const attachment = await this.deps.attachments.create({
-              name: `generated-${Date.now()}.${extFromMime(event.mimeType)}`,
+              name: `${event.type === 'audio' ? 'speech' : 'generated'}-${Date.now()}.${extFromMime(event.mimeType)}`,
               mimeType: event.mimeType,
               data: event.data,
               conversationId: draft.conversationId,
+              generated: true,
             });
             draft.attachments = [...((draft.attachments as AttachmentRef[] | null) ?? []), toRef(attachment)];
             result.emitted = true;

@@ -4,9 +4,13 @@ import Skeleton from '@mui/material/Skeleton';
 import Typography from '@mui/material/Typography';
 import { useState } from 'react';
 import { mergeParams } from '../../../shared/defaults.ts';
+import { SPEECH_VOICES } from '../../../shared/speech.ts';
 import type { GenerationParams } from '../../../shared/types.ts';
 import { useSettings, useUpdateSettings } from '../../api/hooks.ts';
-import { ImageParamsFields, ParamsFields } from './ParamsFields.tsx';
+import { ImageParamsFields, ParamsFields, SpeechParamsFields } from './ParamsFields.tsx';
+
+/** Every known voice, for a default that applies across providers. */
+const ALL_VOICES = [...new Set(Object.values(SPEECH_VOICES).flat())];
 import { SettingsHeader } from './Section.tsx';
 
 export function GenerationTab() {
@@ -39,6 +43,14 @@ function GenerationForm({ saved }: { saved: GenerationParams }) {
           Image generation
         </Typography>
         <ImageParamsFields value={params} onChange={setParams} />
+        <Typography variant="subtitle2" sx={{ mt: 3, mb: 1 }}>
+          Speech
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          For speech panes and Read aloud. A voice from another provider, such as alloy on a Gemini model, is swapped
+          for that model's default voice.
+        </Typography>
+        <SpeechParamsFields value={params} onChange={setParams} voices={ALL_VOICES} />
         <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1, mt: 2 }}>
           <Button color="inherit" disabled={!dirty} onClick={() => setParams(saved)}>
             Discard

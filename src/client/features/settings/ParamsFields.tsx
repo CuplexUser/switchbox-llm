@@ -1,8 +1,11 @@
+import Autocomplete from '@mui/material/Autocomplete';
 import Box from '@mui/material/Box';
 import MenuItem from '@mui/material/MenuItem';
 import TextField from '@mui/material/TextField';
 import {
   ASPECT_RATIOS,
+  AUDIO_FORMATS,
+  type AudioFormat,
   IMAGE_QUALITIES,
   IMAGE_SIZES,
   REASONING_EFFORTS,
@@ -86,6 +89,97 @@ export function ParamsFields({
           </MenuItem>
         ))}
       </TextField>
+    </Box>
+  );
+}
+
+const FORMAT_LABELS: Record<AudioFormat, string> = { mp3: 'MP3', wav: 'WAV', opus: 'Opus', aac: 'AAC', flac: 'FLAC' };
+
+/**
+ * Options for text-to-speech models. Voices differ per provider, so the voice is free text with the
+ * known ones offered; a voice meant for another provider falls back to the model's own default.
+ */
+export function SpeechParamsFields({
+  value,
+  onChange,
+  placeholders,
+  voices,
+  defaultVoices = [],
+  formats = [...AUDIO_FORMATS],
+  twoSpeakers = true,
+}: {
+  value: Partial<GenerationParams>;
+  onChange: (value: Partial<GenerationParams>) => void;
+  placeholders?: GenerationParams;
+  /** The voices to suggest. */
+  voices: string[];
+  /** What an empty first and second voice fall back to, when it's known. */
+  defaultVoices?: string[];
+  /** The formats this model can return. */
+  formats?: AudioFormat[];
+  /** Offer a second voice, for Gemini's two-speaker scripts. */
+  twoSpeakers?: boolean;
+}) {
+  const speed = value.speechSpeed;
+  const badSpeed = speed !== null && speed !== undefined && (speed < 0.25 || speed > 4);
+  const voiceField = (key: 'voice' | 'secondVoice', label: string, help: string, fallback: string | undefined) => (
+    <Autocomplete
+      freeSolo
+      options={voices}
+      value={value[key] ?? ''}
+      onInputChange={(_, text) => onChange({ ...value, [key]: text.trim() || null })}
+      renderInput={(params) => (
+        <TextField
+          {...params}
+          label={label}
+          placeholder={placeholders?.[key] ?? fallback ?? 'Model default'}
+          helperText={help}
+          slotProps={{ ...params.slotProps, inputLabel: { ...params.slotProps.inputLabel, shrink: true } }}
+        />
+      )}
+    />
+  );
+  return (
+    <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, 1fr)' }, columnGap: 1.5, rowGap: 2.5 }}>
+      {voiceField('voice', 'Voice', 'Pick one or type a name the provider offers.', defaultVoices[0])}
+      {twoSpeakers && voiceField('secondVoice', 'Second voice', 'Gemini: for scripts with two speakers, one "Name: line" per line.', defaultVoices[1])}
+      <TextField
+        type="number"
+        label="Speed"
+        value={speed ?? ''}
+        placeholder={placeholders?.speechSpeed !== null && placeholders?.speechSpeed !== undefined ? String(placeholders.speechSpeed) : '1'}
+        error={badSpeed}
+        helperText="0.25 to 4. Gemini takes it as a slow or quick pace."
+        onChange={(event) => {
+          const parsed = event.target.value === '' ? null : Number(event.target.value);
+          onChange({ ...value, speechSpeed: parsed === null || Number.isNaN(parsed) ? null : parsed });
+        }}
+        slotProps={{ inputLabel: { shrink: true }, htmlInput: { min: 0.25, max: 4, step: 0.05 } }}
+      />
+      <TextField
+        select
+        label="Format"
+        value={value.audioFormat && formats.includes(value.audioFormat) ? value.audioFormat : ''}
+        helperText={formats.length === 1 ? 'This model always returns WAV.' : 'MP3 is smallest. WAV is uncompressed.'}
+        onChange={(event) => onChange({ ...value, audioFormat: (event.target.value || null) as AudioFormat | null })}
+        slotProps={{ inputLabel: { shrink: true }, select: { displayEmpty: true } }}
+      >
+        <MenuItem value="">{defaultChoice(placeholders?.audioFormat ? FORMAT_LABELS[placeholders.audioFormat] : formats.length === 1 ? FORMAT_LABELS[formats[0] as AudioFormat] : 'MP3')}</MenuItem>
+        {formats.map((format) => (
+          <MenuItem key={format} value={format}>
+            {FORMAT_LABELS[format]}
+          </MenuItem>
+        ))}
+      </TextField>
+      <TextField
+        label="Style"
+        value={value.speechStyle ?? ''}
+        placeholder={placeholders?.speechStyle ?? 'calm and warm, unhurried'}
+        helperText="Tone, pace or accent, for models that take directions. tts-1 ignores it."
+        onChange={(event) => onChange({ ...value, speechStyle: event.target.value || null })}
+        sx={{ gridColumn: { sm: twoSpeakers ? 'span 2' : 'span 3' } }}
+        slotProps={{ inputLabel: { shrink: true } }}
+      />
     </Box>
   );
 }

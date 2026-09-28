@@ -160,6 +160,17 @@ export function GeneralTab() {
           />
         </SettingRow>
         <SettingRow
+          label="Speech model"
+          description="Adds a Read aloud button to replies, spoken by this text-to-speech model with the voice and style from Settings → Generation."
+        >
+          <ModelButton
+            value={general.speechModel}
+            onChange={(ref) => set('speechModel', ref)}
+            placeholder="Read aloud is off"
+            clearLabel="Turn Read aloud off"
+          />
+        </SettingRow>
+        <SettingRow
           label="Default models for new chats"
           description={`Pre-fills up to ${MAX_PANES} panes when you start a new chat. Without any, your favorites fill the first two.`}
         >

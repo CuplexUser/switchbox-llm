@@ -12,6 +12,11 @@ export const DEFAULT_GENERATION: GenerationParams = {
   aspectRatio: null,
   imageSize: null,
   imageQuality: null,
+  voice: null,
+  secondVoice: null,
+  speechSpeed: null,
+  speechStyle: null,
+  audioFormat: null,
 };
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -21,6 +26,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     persistByDefault: true,
     sendOnEnter: true,
     titleModel: null,
+    speechModel: null,
     chatFont: DEFAULT_CHAT_FONT_ID,
     chatFontSize: DEFAULT_CHAT_FONT_SIZE,
     chatLineHeight: DEFAULT_CHAT_LINE_HEIGHT,
@@ -90,8 +96,19 @@ export function modelKey(ref: { provider: string; model: string }): string {
   return `${ref.provider}:${ref.model}`;
 }
 
-/** Image panes answer with a generated image. Every model on the direct Google provider is one;
- * elsewhere the model list tags them. `info` is the listed model, when it is known. */
+/** Providers whose TTS models can be recognized by a "tts" in the id when the model list isn't loaded. */
+const SPEECH_PROVIDERS = new Set(['openai', 'openrouter', 'google']);
+
+/** Speech panes answer with generated audio. The model list tags them; a "tts" id is enough on
+ * providers with a speech endpoint, so a model typed in by id still works. */
+export function isSpeechModel(ref: ModelRef, info: ModelInfo | null | undefined): boolean {
+  if (info?.kind) return info.kind === 'speech';
+  return SPEECH_PROVIDERS.has(ref.provider) && /(^|[-/_.])tts([-_.]|$)/i.test(ref.model);
+}
+
+/** Image panes answer with a generated image. Every non-speech model on the direct Google provider
+ * is one; elsewhere the model list tags them. `info` is the listed model, when it is known. */
 export function isImageModel(ref: ModelRef, info: ModelInfo | null | undefined): boolean {
+  if (isSpeechModel(ref, info)) return false;
   return ref.provider === 'google' || info?.kind === 'image';
 }

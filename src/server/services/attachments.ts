@@ -17,6 +17,19 @@ const IMAGE_SIGNATURES: [string, number[]][] = [
   ['image/webp', [0x52, 0x49, 0x46, 0x46]],
 ];
 
+/** Formats a speech model can return. Checked after the image signatures, since WAV and WebP are both RIFF. */
+export function audioType(bytes: Uint8Array): string | null {
+  const ascii = (start: number, end: number) => new TextDecoder().decode(bytes.slice(start, end));
+  if (ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WAVE') return 'audio/wav';
+  if (ascii(0, 4) === 'OggS') return 'audio/ogg';
+  if (ascii(0, 4) === 'fLaC') return 'audio/flac';
+  if (ascii(0, 3) === 'ID3') return 'audio/mpeg';
+  if (ascii(4, 8) === 'ftyp') return 'audio/mp4';
+  // A bare MPEG frame sync: 11 set bits. Layer bits 01 are MP3; 00 is an AAC ADTS header.
+  if (bytes[0] === 0xff && ((bytes[1] ?? 0) & 0xe0) === 0xe0) return ((bytes[1] ?? 0) & 0x06) === 0 ? 'audio/aac' : 'audio/mpeg';
+  return null;
+}
+
 const TEXT_EXTENSIONS = new Set(
   '.txt .md .markdown .csv .tsv .json .jsonl .xml .yaml .yml .toml .ini .cfg .conf .log .html .htm .css .scss .js .mjs .cjs .jsx .ts .tsx .py .rb .go .rs .java .kt .swift .c .h .cpp .hpp .cc .cs .php .sql .sh .bash .zsh .ps1 .bat .lua .r .m .scala .dart .vue .svelte .graphql .proto .env .gitignore .dockerfile .tex .rst .srt .vtt'.split(
     ' ',
@@ -37,6 +50,8 @@ export function classify(name: string, mimeType: string, bytes: Uint8Array): { k
     }
   }
   if (startsWith(bytes, [0x25, 0x50, 0x44, 0x46, 0x2d])) return { kind: 'pdf', mimeType: 'application/pdf' };
+  const audio = audioType(bytes);
+  if (audio) return { kind: 'audio', mimeType: audio };
 
   const textual = mimeType.startsWith('text/') || /json|xml|yaml|javascript|typescript|x-sh|csv|markdown|toml|sql/.test(mimeType) || TEXT_EXTENSIONS.has(extname(name).toLowerCase());
   if (!textual) return null;
@@ -58,11 +73,18 @@ const EXTENSION_BY_MIME: Record<string, string> = {
   'image/jpeg': 'jpg',
   'image/webp': 'webp',
   'image/gif': 'gif',
+  'audio/mpeg': 'mp3',
+  'audio/wav': 'wav',
+  'audio/ogg': 'ogg',
+  'audio/aac': 'aac',
+  'audio/flac': 'flac',
+  'audio/mp4': 'm4a',
 };
 
-/** A filename extension for a generated image, from the mime type the provider reported. */
+/** A filename extension for a generated image or speech, from the mime type the provider reported. */
 export function extFromMime(mimeType: string): string {
-  return EXTENSION_BY_MIME[mimeType.toLowerCase()] ?? 'png';
+  const type = mimeType.toLowerCase().split(';')[0] ?? '';
+  return EXTENSION_BY_MIME[type] ?? (type.startsWith('audio/') ? 'mp3' : 'png');
 }
 
 export function toAttachment(row: AttachmentRow): Attachment {
@@ -83,7 +105,8 @@ export class AttachmentService {
     this.repos = repos;
   }
 
-  async create(input: { name: string; mimeType: string; data: string; conversationId?: string | null }): Promise<Attachment> {
+  /** `generated` is set for a model's own output; uploads can't be audio, since no model is sent audio. */
+  async create(input: { name: string; mimeType: string; data: string; conversationId?: string | null; generated?: boolean }): Promise<Attachment> {
     const name = input.name.trim().slice(0, 200) || 'file';
     const bytes = Buffer.from(input.data, 'base64');
     if (bytes.byteLength === 0) throw new AttachmentError(`${name} is empty.`);
@@ -91,7 +114,9 @@ export class AttachmentService {
       throw new AttachmentError(`${name} is larger than ${MAX_ATTACHMENT_BYTES / 1024 / 1024} MB.`);
     }
     const kind = classify(name, input.mimeType.toLowerCase(), bytes);
-    if (!kind) throw new AttachmentError(`${name} isn't a supported file. Attach images (PNG, JPEG, GIF, WebP), PDFs, or text and code files.`);
+    if (!kind || (kind.kind === 'audio' && !input.generated)) {
+      throw new AttachmentError(`${name} isn't a supported file. Attach images (PNG, JPEG, GIF, WebP), PDFs, or text and code files.`);
+    }
     const row = await this.repos.attachments.create({
       id: randomUUID(),
       conversationId: input.conversationId ?? null,
@@ -125,12 +150,12 @@ export class AttachmentService {
     return refs;
   }
 
-  /** File contents ready for a provider: base64 for images and PDFs, text for text files. */
+  /** File contents ready for a provider: base64 for images and PDFs, text for text files. Audio is left out. */
   async load(refs: AttachmentRef[]): Promise<LoopAttachment[]> {
     const loaded: LoopAttachment[] = [];
     for (const ref of refs) {
       const row = await this.repos.attachments.findById(ref.id);
-      if (!row) continue;
+      if (!row || row.kind === 'audio') continue;
       if (row.kind === 'text') {
         const text = decodeText(row.data);
         const cut = text.length > INLINE_TEXT_CHARS;

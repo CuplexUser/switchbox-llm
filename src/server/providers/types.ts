@@ -15,7 +15,7 @@ export interface ToolCall {
   arguments: string;
 }
 
-/** A file sent with a user message: base64 bytes for images and PDFs, decoded text for text files. */
+/** A file sent with a user message: base64 bytes for images and PDFs, decoded text for text files. Audio never is. */
 export interface LoopAttachment {
   id: string;
   name: string;
@@ -49,7 +49,9 @@ export type ChatEvent =
   /** The complete assistant turn in the provider's format, for replay on the next request. */
   | { type: 'assistant_raw'; content: unknown }
   /** An image the provider generated. Base64, no data: url prefix. */
-  | { type: 'image'; mimeType: string; data: string };
+  | { type: 'image'; mimeType: string; data: string }
+  /** Speech the provider generated. Base64. */
+  | { type: 'audio'; mimeType: string; data: string };
 
 export interface ChatRequest {
   model: string;
@@ -62,6 +64,13 @@ export interface ChatRequest {
   nativeSearch?: boolean;
   /** This model answers with a generated image instead of, or alongside, text. */
   imageOutput?: boolean;
+  /** This model reads the latest user message aloud and answers with audio. */
+  speechOutput?: boolean;
+}
+
+/** The text a speech model reads: the latest user message. */
+export function speechInput(messages: LoopMessage[]): string {
+  return messages.findLast((message) => message.role === 'user')?.content.trim() ?? '';
 }
 
 export interface Provider {
