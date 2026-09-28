@@ -1,5 +1,5 @@
 import { DEFAULT_CHAT_FONT_ID, DEFAULT_CHAT_FONT_SIZE, DEFAULT_CHAT_LINE_HEIGHT } from './chatFonts.ts';
-import type { AppSettings, GenerationParams } from './types.ts';
+import type { AppSettings, GenerationParams, ModelInfo, ModelRef } from './types.ts';
 
 export const MAX_PANES = 4;
 
@@ -9,6 +9,9 @@ export const DEFAULT_GENERATION: GenerationParams = {
   maxTokens: null,
   reasoningEffort: null,
   thinkingBudget: null,
+  aspectRatio: null,
+  imageSize: null,
+  imageQuality: null,
 };
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -85,4 +88,10 @@ export function mergeParams(...layers: (Partial<GenerationParams> | null | undef
 
 export function modelKey(ref: { provider: string; model: string }): string {
   return `${ref.provider}:${ref.model}`;
+}
+
+/** Image panes answer with a generated image. Every model on the direct Google provider is one;
+ * elsewhere the model list tags them. `info` is the listed model, when it is known. */
+export function isImageModel(ref: ModelRef, info: ModelInfo | null | undefined): boolean {
+  return ref.provider === 'google' || info?.kind === 'image';
 }

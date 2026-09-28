@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_GENERATION } from '../../shared/defaults.ts';
+import type { GenerationParams } from '../../shared/types.ts';
 import {
   AnthropicProvider,
   AnthropicTurn,
@@ -9,8 +10,8 @@ import {
   webSearchToolFor,
   type AnthropicEvent,
 } from './anthropic.ts';
-import { GoogleProvider } from './google.ts';
-import { mapModels, mapOpenAiChunk, OpenAiCompatibleProvider, reasoningFields, toOpenAiMessages } from './openaiCompatible.ts';
+import { GoogleProvider, googleImageConfig } from './google.ts';
+import { mapModels, mapOpenAiChunk, OpenAiCompatibleProvider, openAiImageFields, reasoningFields, toOpenAiMessages } from './openaiCompatible.ts';
 import { providerFetch, retryDelay, type ChatEvent, type ChatRequest, type LoopMessage } from './types.ts';
 
 function sseResponse(frames: string[]): Response {
@@ -205,6 +206,24 @@ describe('OpenAI-compatible provider', () => {
     expect(url).toBe('https://api.test/v1/images/generations');
     expect(sentBody(fetchMock)).toEqual({ model: 'gpt-image-1', prompt: 'Hi', n: 1 });
   });
+
+  it('sends image options in each image dialect', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => sseResponse(['data: [DONE]\n\n']));
+    vi.stubGlobal('fetch', fetchMock);
+    const openRouter = new OpenAiCompatibleProvider({ id: 'openrouter', baseUrl: 'https://x.test/v1', apiKey: 'k' });
+    await collect(openRouter.streamChat(request({ imageOutput: true, params: params({ aspectRatio: '16:9', imageSize: '2K' }) })));
+    expect(sentBody(fetchMock).image_config).toEqual({ aspect_ratio: '16:9', image_size: '2K' });
+
+    const wide = params({ aspectRatio: '21:9', imageQuality: 'high' });
+    expect(openAiImageFields('gpt-image-1', wide)).toEqual({ size: '1536x1024', quality: 'high' });
+    expect(openAiImageFields('dall-e-3', params({ aspectRatio: '9:16', imageQuality: 'high' }))).toEqual({
+      response_format: 'b64_json',
+      size: '1024x1792',
+      quality: 'hd',
+    });
+    // DALL·E 2 only draws squares, but still has to be asked for base64.
+    expect(openAiImageFields('dall-e-2', wide)).toEqual({ response_format: 'b64_json' });
+  });
 });
 
 describe('Google provider', () => {
@@ -236,6 +255,13 @@ describe('Google provider', () => {
     const body = sentBody(fetchMock);
     expect(body.contents).toEqual([{ role: 'user', parts: [{ inlineData: { mimeType: 'image/png', data: 'BBBB' } }, { text: 'Make it blue' }] }]);
     expect(body.systemInstruction).toEqual({ parts: [{ text: 'Be brief.' }] });
+  });
+
+  it('sends aspect ratio and size, leaving the size out for Gemini 2.5', () => {
+    const options = params({ aspectRatio: '4:5', imageSize: '4K' });
+    expect(googleImageConfig('gemini-3-pro-image-preview', options)).toEqual({ aspectRatio: '4:5', imageSize: '4K' });
+    expect(googleImageConfig('gemini-2.5-flash-image', options)).toEqual({ aspectRatio: '4:5' });
+    expect(googleImageConfig('gemini-2.5-flash-image', params())).toBeNull();
   });
 
   it('reports the provider error message on a failed request', async () => {
@@ -353,7 +379,7 @@ describe('Anthropic provider', () => {
   });
 });
 
-function params(overrides = {}) {
+function params(overrides: Partial<GenerationParams> = {}): GenerationParams {
   return { ...DEFAULT_GENERATION, ...overrides };
 }
 

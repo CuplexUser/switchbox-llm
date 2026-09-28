@@ -12,7 +12,8 @@ _server done_ have their API and tests in place and are waiting for their UI.
 - **Phase D (security):** done
 - **Phase E (quality):** done
 - **Phase F (workspaces):** done
-- **Phase G (image generation):** done
+- **Phase G (image generation):** mostly done
+- **Phase H (text to speech):** planned
 
 ## A. Agents and tools
 
@@ -141,3 +142,36 @@ _server done_ have their API and tests in place and are waiting for their UI.
       for a follow-up prompt in the same pane, instead of requiring the user to re-attach it.
 - [ ] **G4. Cost for direct Google and OpenAI image replies** (S). Today only OpenRouter reports real cost for
       image generation; Google and OpenAI image replies show "no price" on the Usage page.
+- [x] **G5. Image options** (S). Aspect ratio, resolution and quality as `GenerationParams` fields, so they
+      layer from Settings → Generation to a pane like temperature does. Sent as `image_config` to OpenRouter,
+      `generationConfig.imageConfig` to Google, and `size`/`quality` to OpenAI's `/images/generations`.
+- [x] **G6. Save as another format** (S). A generated image's save menu converts it to PNG, JPG or WebP in the
+      browser, or copies it to the clipboard.
+
+## H. Text to speech
+
+Findings from looking into it (September 2026). OpenAI and OpenRouter both serve TTS from an OpenAI-style
+`POST /audio/speech` that returns raw audio bytes, so one code path covers both. Google's Gemini TTS models
+now sit behind its newer Interactions API rather than `generateContent`.
+
+| Route | Models | Options |
+| --- | --- | --- |
+| OpenAI `/audio/speech` | `gpt-4o-mini-tts`, `tts-1`, `tts-1-hd` | voice (alloy, ash, coral, nova, …), speed 0.25–4, format (mp3, opus, aac, flac, wav), `instructions` for tone on gpt-4o-mini-tts |
+| OpenRouter `/audio/speech` | OpenAI, Gemini Flash TTS, Voxtral Mini TTS | voice, format (mp3 or pcm) |
+| Google Interactions API | `gemini-3.8-flash-tts`, `gemini-3.8-flash-lite-tts` | 30 voices, style prompts, inline tags such as `<laugh>`, two speakers; returns 24 kHz WAV |
+
+- [ ] **H1. Speech models as a pane type** (M). Add `kind: 'speech'` beside `'image'`. OpenRouter lists TTS
+      models with an audio output modality; OpenAI's list needs `tts` removed from `NON_CHAT_MODEL` and matched
+      like `OPENAI_IMAGE_MODEL`. The pane sends its latest user message as `input` and gets back a new
+      `{ type: 'audio' }` `ChatEvent`, stored through `AttachmentService`.
+- [ ] **H2. Audio attachments** (S). `AttachmentKind` gains `'audio'`, `classify()` learns the MP3/WAV/Ogg
+      signatures, and a reply shows an `<audio>` player with the same save menu as images. Audio is never sent
+      back to a model as history.
+- [ ] **H3. Speech options** (S). Voice, speed, format and a style instruction as `GenerationParams` fields,
+      shown for speech panes the way image options are for image panes. Voice lists differ per provider, so
+      the field is a free-text combo box seeded with each provider's known voices.
+- [ ] **H4. Read a reply aloud** (M). A "Read aloud" action on any text reply that sends it to a chosen
+      speech model (a Settings → General default, like the title model). Probably more useful day to day than
+      a dedicated pane.
+- [ ] **H5. Gemini TTS directly** (M). Through the Interactions API with `GEMINI_API_KEY`. Only worth it if
+      OpenRouter's Gemini TTS route turns out to lack its style and multi-speaker options.

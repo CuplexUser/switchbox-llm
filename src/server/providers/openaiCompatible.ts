@@ -137,6 +137,43 @@ export function reasoningFields(id: ProviderId, params: GenerationParams): Recor
   return effort ? { reasoning_effort: effort } : {};
 }
 
+/** OpenRouter's `image_config` for image-output chat models. Null when nothing is set. */
+export function openRouterImageConfig(params: GenerationParams): Record<string, string> | null {
+  const config: Record<string, string> = {};
+  if (params.aspectRatio) config.aspect_ratio = params.aspectRatio;
+  if (params.imageSize) config.image_size = params.imageSize;
+  return Object.keys(config).length > 0 ? config : null;
+}
+
+function orientation(ratio: string): 'square' | 'landscape' | 'portrait' {
+  const [width = 1, height = 1] = ratio.split(':').map(Number);
+  return width === height ? 'square' : width > height ? 'landscape' : 'portrait';
+}
+
+const GPT_IMAGE_SIZES = { square: '1024x1024', landscape: '1536x1024', portrait: '1024x1536' };
+const DALL_E_3_SIZES = { square: '1024x1024', landscape: '1792x1024', portrait: '1024x1792' };
+
+/**
+ * Size, quality and response format for OpenAI's /images/generations. It takes fixed pixel sizes rather
+ * than ratios, so the ratio picks the nearest orientation. DALL·E answers with a hosted url unless asked
+ * for base64; gpt-image models always send base64 and reject `response_format`.
+ */
+export function openAiImageFields(model: string, params: GenerationParams): Record<string, string> {
+  const fields: Record<string, string> = {};
+  const shape = params.aspectRatio ? orientation(params.aspectRatio) : null;
+  if (/^dall-e/i.test(model)) {
+    fields.response_format = 'b64_json';
+    if (/^dall-e-3/i.test(model)) {
+      if (shape) fields.size = DALL_E_3_SIZES[shape];
+      if (params.imageQuality) fields.quality = params.imageQuality === 'high' ? 'hd' : 'standard';
+    }
+    return fields;
+  }
+  if (shape) fields.size = GPT_IMAGE_SIZES[shape];
+  if (params.imageQuality) fields.quality = params.imageQuality;
+  return fields;
+}
+
 export function toOpenAiMessages(system: string, messages: LoopMessage[]): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = system ? [{ role: 'system', content: system }] : [];
   for (const message of messages) {
@@ -252,7 +289,11 @@ export class OpenAiCompatibleProvider implements Provider {
       stream_options: { include_usage: true },
     };
     // OpenRouter proxies image-output models (Nano Banana and the like) through this same endpoint.
-    if (request.imageOutput && this.id === 'openrouter') body.modalities = ['image', 'text'];
+    if (request.imageOutput && this.id === 'openrouter') {
+      body.modalities = ['image', 'text'];
+      const imageConfig = openRouterImageConfig(request.params);
+      if (imageConfig) body.image_config = imageConfig;
+    }
     const { temperature, topP, maxTokens } = request.params;
     if (temperature !== null) body.temperature = temperature;
     if (topP !== null) body.top_p = topP;
@@ -310,7 +351,7 @@ export class OpenAiCompatibleProvider implements Provider {
     const response = await providerFetch(this.label, joinUrl(this.baseUrl, 'images/generations'), {
       method: 'POST',
       headers: this.headers(),
-      body: JSON.stringify({ model: request.model, prompt, n: 1 }),
+      body: JSON.stringify({ model: request.model, prompt, n: 1, ...openAiImageFields(request.model, request.params) }),
       signal: request.signal,
     });
     if (!response.ok) throw await errorFromResponse(this.label, response);

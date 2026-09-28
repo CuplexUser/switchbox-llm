@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mergeParams } from '../../shared/defaults.ts';
+import { isImageModel, mergeParams } from '../../shared/defaults.ts';
 import type {
   ActivityItem,
   AppSettings,
@@ -326,7 +326,7 @@ export class ChatService {
         model: titleModel.model,
         system: TITLE_PROMPT,
         messages: [{ role: 'user', content: content.slice(0, 2_000) }],
-        params: { temperature: 0.3, topP: null, maxTokens: 2_000, reasoningEffort: 'low', thinkingBudget: null },
+        params: mergeParams({ temperature: 0.3, maxTokens: 2_000, reasoningEffort: 'low' }),
         signal: AbortSignal.timeout(20_000),
       })) {
         if (event.type === 'text') text += event.text;
@@ -484,8 +484,8 @@ export class ChatService {
       let web = assembled.web;
       let tools = assembled.tools;
       // Image models answer with a generated attachment, not tool use or web search.
-      const isImageModel = assembled.provider === 'google' || providers.cachedModel(assembled.provider, pane.model)?.kind === 'image';
-      if (isImageModel) {
+      const imageOutput = isImageModel({ provider: assembled.provider, model: pane.model }, providers.cachedModel(assembled.provider, pane.model));
+      if (imageOutput) {
         tools = [];
         web = { search: null, fetch: false, nativeSearch: false, resolved: 'none', note: null };
       }
@@ -524,7 +524,7 @@ export class ChatService {
             signal,
             tools: tools.map((tool) => tool.spec),
             nativeSearch: web.nativeSearch,
-            imageOutput: isImageModel,
+            imageOutput,
           },
           {
             draft,

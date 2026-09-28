@@ -21,7 +21,12 @@ export function attachmentUrl(id: string): string {
 
 /** Saves text as a file through a temporary link. */
 export function downloadText(filename: string, text: string, type: string): void {
-  const url = URL.createObjectURL(new Blob([text], { type }));
+  downloadBlob(filename, new Blob([text], { type }));
+}
+
+/** Saves a blob as a file through a temporary link. */
+export function downloadBlob(filename: string, blob: Blob): void {
+  const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
   link.download = filename;
@@ -33,4 +38,40 @@ export function downloadText(filename: string, text: string, type: string): void
 
 export function safeFilename(title: string): string {
   return title.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'chat';
+}
+
+export type ImageFormat = 'png' | 'jpeg' | 'webp';
+
+export const IMAGE_FORMAT_LABELS: Record<ImageFormat, string> = { png: 'PNG', jpeg: 'JPG', webp: 'WebP' };
+const FORMAT_EXTENSIONS: Record<ImageFormat, string> = { png: 'png', jpeg: 'jpg', webp: 'webp' };
+
+/**
+ * Re-encodes an image in the browser. JPG has no transparency, so it is drawn over white rather
+ * than letting transparent pixels turn black.
+ */
+export async function convertImage(url: string, format: ImageFormat, quality = 0.92): Promise<Blob> {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Couldn't load the image (${response.status})`);
+  const bitmap = await createImageBitmap(await response.blob());
+  const canvas = document.createElement('canvas');
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('This browser cannot convert images');
+  if (format === 'jpeg') {
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+  }
+  context.drawImage(bitmap, 0, 0);
+  bitmap.close();
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, `image/${format}`, quality));
+  // Browsers fall back to PNG for a type they can't write, so check what actually came out.
+  if (!blob || blob.type !== `image/${format}`) throw new Error(`This browser cannot save ${IMAGE_FORMAT_LABELS[format]} images`);
+  return blob;
+}
+
+/** `name` with its extension swapped for the format's. */
+export function renameForFormat(name: string, format: ImageFormat): string {
+  const base = name.replace(/\.[^.]+$/, '') || 'image';
+  return `${base}.${FORMAT_EXTENSIONS[format]}`;
 }

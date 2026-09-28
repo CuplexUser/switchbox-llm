@@ -1,4 +1,4 @@
-import { PROVIDER_LABELS, type ModelInfo } from '../../shared/types.ts';
+import { PROVIDER_LABELS, type GenerationParams, type ModelInfo } from '../../shared/types.ts';
 import { errorFromResponse, joinUrl, ProviderError, providerFetch, type ChatEvent, type ChatRequest, type LoopMessage, type Provider } from './types.ts';
 
 const LABEL = PROVIDER_LABELS.google;
@@ -43,6 +43,15 @@ function toContents(messages: LoopMessage[]): Record<string, unknown>[] {
   return contents;
 }
 
+/** `generationConfig.imageConfig`. Null when nothing is set. The size tier is only sent to models
+ * newer than Gemini 2.5, which has a single fixed resolution. */
+export function googleImageConfig(model: string, params: GenerationParams): Record<string, string> | null {
+  const config: Record<string, string> = {};
+  if (params.aspectRatio) config.aspectRatio = params.aspectRatio;
+  if (params.imageSize && !model.startsWith('gemini-2.')) config.imageSize = params.imageSize;
+  return Object.keys(config).length > 0 ? config : null;
+}
+
 export interface GoogleOptions {
   baseUrl: string;
   apiKey: string | null;
@@ -68,10 +77,10 @@ export class GoogleProvider implements Provider {
     if (!this.apiKey) throw new ProviderError(`${LABEL} needs an API key.`);
     if (!this.baseUrl) throw new ProviderError(`${LABEL} has no base URL configured`);
 
-    const body: Record<string, unknown> = {
-      contents: toContents(request.messages),
-      generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
-    };
+    const generationConfig: Record<string, unknown> = { responseModalities: ['TEXT', 'IMAGE'] };
+    const imageConfig = googleImageConfig(request.model, request.params);
+    if (imageConfig) generationConfig.imageConfig = imageConfig;
+    const body: Record<string, unknown> = { contents: toContents(request.messages), generationConfig };
     if (request.system) body.systemInstruction = { parts: [{ text: request.system }] };
 
     const url = joinUrl(this.baseUrl, `models/${request.model}:generateContent`);

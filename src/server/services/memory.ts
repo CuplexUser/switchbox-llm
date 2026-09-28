@@ -1,3 +1,4 @@
+import { mergeParams } from '../../shared/defaults.ts';
 import type {
   ChatTurn,
   MemoryAction,
@@ -359,7 +360,7 @@ export class MemoryService {
       model: model.model,
       system,
       messages: [{ role: 'user', content }],
-      params: { temperature: 0.2, topP: null, maxTokens: 1024, reasoningEffort: null, thinkingBudget: null },
+      params: mergeParams({ temperature: 0.2, maxTokens: 1024 }),
       signal: signal ?? AbortSignal.timeout(60_000),
     })) {
       if (event.type === 'text') reply += event.text;

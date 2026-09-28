@@ -78,8 +78,13 @@ picker also accepts any model id typed directly, which helps when a server doesn
 
 Set a pane's model to an image model — Nano Banana or Nano Banana Pro (Gemini image models), gpt-image-1, or
 dall-e — and sending it a message generates an image instead of streaming text. The image comes back as an
-attachment on the reply, with a download button, the same way an uploaded file would look. Image models are
-marked "Image" in the model picker.
+attachment on the reply. Its save button offers the original file, a copy converted to PNG, JPG or WebP, or
+the image on the clipboard. Image models are marked "Image" in the model picker.
+
+Aspect ratio, resolution and quality are set under Settings → Generation as defaults, and per pane in the
+pane's settings. Each provider uses the options it supports and skips the rest: resolution (1K/2K/4K) applies
+to the Gemini 3 image models, and quality to OpenAI's. OpenAI takes fixed sizes rather than ratios, so the
+ratio picks square, wide or tall.
 
 There are three ways to reach Nano Banana:
 

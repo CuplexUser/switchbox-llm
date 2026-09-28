@@ -8,9 +8,10 @@ import MenuItem from '@mui/material/MenuItem';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import { useState } from 'react';
+import { isImageModel } from '../../../shared/defaults.ts';
 import type { GenerationParams, Pane } from '../../../shared/types.ts';
-import { usePrompts, useSettings, useUpdatePane } from '../../api/hooks.ts';
-import { ParamsFields } from '../settings/ParamsFields.tsx';
+import { useModels, usePrompts, useSettings, useUpdatePane } from '../../api/hooks.ts';
+import { ImageParamsFields, ParamsFields } from '../settings/ParamsFields.tsx';
 
 export function PaneSettingsDialog({ pane, open, onClose }: { pane: Pane; open: boolean; onClose: () => void }) {
   return (
@@ -23,12 +24,17 @@ export function PaneSettingsDialog({ pane, open, onClose }: { pane: Pane; open: 
 function PaneSettingsForm({ pane, onClose }: { pane: Pane; onClose: () => void }) {
   const prompts = usePrompts();
   const settings = useSettings();
+  const models = useModels();
   const updatePane = useUpdatePane();
   const [promptId, setPromptId] = useState(pane.systemPromptId ?? '');
   const [custom, setCustom] = useState(pane.systemPrompt ?? '');
   const [params, setParams] = useState<Partial<GenerationParams>>(pane.params);
 
   const preset = prompts.data?.find((prompt) => prompt.id === promptId);
+  const imagePane = isImageModel(
+    pane,
+    models.data?.models.find((model) => model.provider === pane.provider && model.model === pane.model),
+  );
 
   function save(): void {
     updatePane.mutate(
@@ -73,6 +79,15 @@ function PaneSettingsForm({ pane, onClose }: { pane: Pane; onClose: () => void }
             onChange={(event) => setCustom(event.target.value)}
           />
         </Box>
+        {imagePane && (
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+            <Typography variant="subtitle2">Image</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: -1 }}>
+              Leave a field empty to use the default from Settings.
+            </Typography>
+            <ImageParamsFields value={params} onChange={setParams} placeholders={settings.data?.generation} />
+          </Box>
+        )}
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
           <Typography variant="subtitle2">Generation</Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: -1 }}>

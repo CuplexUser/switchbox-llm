@@ -131,7 +131,7 @@ export function ModelPicker({ anchorEl, open, onClose, onSelect, selected }: Mod
       onClose={onClose}
       anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
       transformOrigin={{ vertical: -6, horizontal: 'left' }}
-      slotProps={{ paper: { sx: { width: 420, maxWidth: 'calc(100vw - 32px)' } } }}
+      slotProps={{ paper: { sx: { width: 540, maxWidth: 'calc(100vw - 32px)' } } }}
     >
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 1.5, py: 1, borderBottom: '1px solid var(--sb-border)' }}>
         <SearchRoundedIcon fontSize="small" sx={{ color: 'var(--sb-text-faint)' }} />
@@ -210,25 +210,27 @@ export function ModelPicker({ anchorEl, open, onClose, onSelect, selected }: Mod
                 alignItems: 'center',
                 gap: 1.25,
                 px: 1.25,
-                py: 0.75,
+                py: 0.875,
                 borderRadius: '6px',
                 cursor: 'pointer',
                 backgroundColor: isActive ? 'action.hover' : isSelected ? 'action.selected' : 'transparent',
               }}
             >
               <ProviderMark provider={model?.provider ?? row.provider ?? 'custom'} />
-              <Box sx={{ minWidth: 0, flex: 1 }}>
-                <Typography variant="body2" noWrap sx={{ fontWeight: 550 }}>
+              {/* Names and ids wrap rather than truncate: several models share a long prefix
+                  ("Google: Nano Banana 2 …") and differ only at the end. */}
+              <Box sx={{ minWidth: 0, flex: 1, overflowWrap: 'anywhere' }}>
+                <Typography variant="body2" sx={{ fontWeight: 550, lineHeight: 1.35 }}>
                   {row.kind === 'custom' ? `Use “${row.label}” on ${PROVIDER_LABELS[row.provider ?? 'custom']}` : row.label}
                 </Typography>
                 {model && model.name !== model.model && (
-                  <Typography variant="caption" noWrap component="div" sx={{ color: 'var(--sb-text-faint)' }}>
+                  <Typography variant="caption" component="div" sx={{ color: 'var(--sb-text-faint)', lineHeight: 1.35 }}>
                     {model.model}
                   </Typography>
                 )}
               </Box>
               {model && (
-                <Box sx={{ display: 'flex', gap: 1, color: 'var(--sb-text-faint)', flexShrink: 0 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, color: 'var(--sb-text-faint)', flexShrink: 0 }}>
                   {model.kind === 'image' && (
                     <Typography
                       variant="caption"

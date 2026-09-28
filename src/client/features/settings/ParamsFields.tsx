@@ -1,7 +1,17 @@
 import Box from '@mui/material/Box';
 import MenuItem from '@mui/material/MenuItem';
 import TextField from '@mui/material/TextField';
-import { REASONING_EFFORTS, type GenerationParams, type ReasoningEffort } from '../../../shared/types.ts';
+import {
+  ASPECT_RATIOS,
+  IMAGE_QUALITIES,
+  IMAGE_SIZES,
+  REASONING_EFFORTS,
+  type AspectRatio,
+  type GenerationParams,
+  type ImageQuality,
+  type ImageSize,
+  type ReasoningEffort,
+} from '../../../shared/types.ts';
 
 type NumberKey = 'temperature' | 'topP' | 'maxTokens' | 'thinkingBudget';
 
@@ -73,6 +83,74 @@ export function ParamsFields({
         {REASONING_EFFORTS.map((effort) => (
           <MenuItem key={effort} value={effort}>
             {EFFORT_LABELS[effort]}
+          </MenuItem>
+        ))}
+      </TextField>
+    </Box>
+  );
+}
+
+const QUALITY_LABELS: Record<ImageQuality, string> = { low: 'Low', medium: 'Medium', high: 'High' };
+
+/** The empty choice in a select: what an unset field falls back to. */
+function defaultChoice(label: string | null | undefined): string {
+  return label ? `Default (${label})` : 'Model default';
+}
+
+/** Options for image-generation models. Each provider takes the ones it understands and skips the rest. */
+export function ImageParamsFields({
+  value,
+  onChange,
+  placeholders,
+}: {
+  value: Partial<GenerationParams>;
+  onChange: (value: Partial<GenerationParams>) => void;
+  placeholders?: GenerationParams;
+}) {
+  return (
+    <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, 1fr)' }, columnGap: 1.5, rowGap: 2.5 }}>
+      <TextField
+        select
+        label="Aspect ratio"
+        value={value.aspectRatio ?? ''}
+        helperText="Width to height. OpenAI picks the nearest of square, wide or tall."
+        onChange={(event) => onChange({ ...value, aspectRatio: (event.target.value || null) as AspectRatio | null })}
+        slotProps={{ inputLabel: { shrink: true }, select: { displayEmpty: true } }}
+      >
+        <MenuItem value="">{defaultChoice(placeholders?.aspectRatio)}</MenuItem>
+        {ASPECT_RATIOS.map((ratio) => (
+          <MenuItem key={ratio} value={ratio}>
+            {ratio}
+          </MenuItem>
+        ))}
+      </TextField>
+      <TextField
+        select
+        label="Resolution"
+        value={value.imageSize ?? ''}
+        helperText="For Gemini 3 image models (Nano Banana 2 and Pro)."
+        onChange={(event) => onChange({ ...value, imageSize: (event.target.value || null) as ImageSize | null })}
+        slotProps={{ inputLabel: { shrink: true }, select: { displayEmpty: true } }}
+      >
+        <MenuItem value="">{defaultChoice(placeholders?.imageSize)}</MenuItem>
+        {IMAGE_SIZES.map((size) => (
+          <MenuItem key={size} value={size}>
+            {size}
+          </MenuItem>
+        ))}
+      </TextField>
+      <TextField
+        select
+        label="Quality"
+        value={value.imageQuality ?? ''}
+        helperText="For OpenAI's image models. Higher costs more."
+        onChange={(event) => onChange({ ...value, imageQuality: (event.target.value || null) as ImageQuality | null })}
+        slotProps={{ inputLabel: { shrink: true }, select: { displayEmpty: true } }}
+      >
+        <MenuItem value="">{defaultChoice(placeholders?.imageQuality && QUALITY_LABELS[placeholders.imageQuality])}</MenuItem>
+        {IMAGE_QUALITIES.map((quality) => (
+          <MenuItem key={quality} value={quality}>
+            {QUALITY_LABELS[quality]}
           </MenuItem>
         ))}
       </TextField>

@@ -3,9 +3,10 @@ import Button from '@mui/material/Button';
 import Skeleton from '@mui/material/Skeleton';
 import Typography from '@mui/material/Typography';
 import { useState } from 'react';
+import { mergeParams } from '../../../shared/defaults.ts';
 import type { GenerationParams } from '../../../shared/types.ts';
 import { useSettings, useUpdateSettings } from '../../api/hooks.ts';
-import { ParamsFields } from './ParamsFields.tsx';
+import { ImageParamsFields, ParamsFields } from './ParamsFields.tsx';
 import { SettingsHeader } from './Section.tsx';
 
 export function GenerationTab() {
@@ -34,6 +35,10 @@ function GenerationForm({ saved }: { saved: GenerationParams }) {
           newer Claude models think adaptively at that effort, older ones use the thinking budget, and OpenAI and
           OpenRouter get their own reasoning setting.
         </Typography>
+        <Typography variant="subtitle2" sx={{ mt: 3, mb: 2 }}>
+          Image generation
+        </Typography>
+        <ImageParamsFields value={params} onChange={setParams} />
         <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1, mt: 2 }}>
           <Button color="inherit" disabled={!dirty} onClick={() => setParams(saved)}>
             Discard
@@ -44,13 +49,7 @@ function GenerationForm({ saved }: { saved: GenerationParams }) {
             onClick={() =>
               update.mutate({
                 section: 'generation',
-                value: {
-                  temperature: params.temperature ?? null,
-                  topP: params.topP ?? null,
-                  maxTokens: params.maxTokens ?? null,
-                  reasoningEffort: params.reasoningEffort ?? null,
-                  thinkingBudget: params.thinkingBudget ?? null,
-                },
+                value: mergeParams(params),
               })
             }
           >
