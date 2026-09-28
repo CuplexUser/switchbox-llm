@@ -11,7 +11,10 @@ in parallel.
 - **Text to speech:** a pane on a speech model reads each message aloud and answers with audio, and any reply
   can be read aloud with a speech model you choose. See [Text to speech](#text-to-speech)
 - **Comparison:** up to 4 panes per chat, each with its own stop button and a regenerate action; a
-  single composer can target all panes or only some. "Compare replies" shows each exchange's speed, tokens and
+  single composer can target all panes or only some. On the new chat page, each pane can get its own profile,
+  instructions and generation, image or speech settings before the first message is sent. The model picker
+  filters by provider and by type (text, image, speech), which helps when a model is offered by several
+  providers. "Compare replies" shows each exchange's speed, tokens and
   cost with totals, and a word-level diff of any two panes. One reply per exchange can be marked as the best
 - **Editing:** edit a message you sent and every pane that has it answers again; branch any reply into a new
   chat; a failed reply can be retried or sent to another model
@@ -106,7 +109,10 @@ cost is only reported for OpenRouter — Google and OpenAI image replies show "n
 ## Text to speech
 
 A pane set to a speech model reads each message you send aloud. The reply is an audio player with a save
-button that offers the original file or a WAV copy converted in the browser. Speech models are marked
+button that offers the original file or a copy as MP3, AAC (`.m4a`), AC-3 (`.ac3`, Dolby Digital) or WAV.
+Conversion happens in the browser with [Mediabunny](https://mediabunny.dev) and its WASM encoders, which load
+the first time you save, so nothing extra has to be installed. The compressed formats are encoded at 96 kbps
+per channel, which is plenty for speech, and AC-3 is resampled to 48 kHz, the highest rate it supports. Speech models are marked
 "Speech" in the model picker. They come from three places:
 
 - **OpenAI**: `gpt-4o-mini-tts`, `tts-1` and `tts-1-hd`

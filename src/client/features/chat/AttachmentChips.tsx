@@ -21,7 +21,6 @@ import type { AttachmentKind, AttachmentRef } from '../../../shared/types.ts';
 import {
   attachmentUrl,
   audioLabel,
-  convertAudioToWav,
   convertImage,
   downloadBlob,
   formatBytes,
@@ -30,6 +29,7 @@ import {
   withExtension,
   type ImageFormat,
 } from '../../lib/files.ts';
+import { AUDIO_SAVE_OPTIONS, audioSaveFormatOf, convertAudio, type AudioSaveOption } from '../../lib/audio.ts';
 
 export interface ChipItem {
   key: string;
@@ -264,11 +264,18 @@ export function GeneratedAudio({ attachments }: { attachments: AttachmentRef[] }
 
 function GeneratedClip({ clip }: { clip: AttachmentRef }) {
   const { menuAnchor, setMenuAnchor, status, run } = useSaveMenu();
+  const [converting, setConverting] = useState<string | null>(null);
   const url = attachmentUrl(clip.id);
+  const original = audioSaveFormatOf(clip.mimeType);
 
-  const saveAsWav = () =>
+  const saveAs = (option: AudioSaveOption) =>
     run(async () => {
-      downloadBlob(withExtension(clip.name, 'wav'), await convertAudioToWav(url));
+      setConverting(option.label);
+      try {
+        downloadBlob(withExtension(clip.name, option.extension), await convertAudio(url, option.format));
+      } finally {
+        setConverting(null);
+      }
       return null;
     });
 
@@ -276,10 +283,18 @@ function GeneratedClip({ clip }: { clip: AttachmentRef }) {
     <Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, maxWidth: 480 }}>
         <Box component="audio" controls preload="metadata" src={url} aria-label={clip.name} sx={{ flex: 1, minWidth: 0, height: 40 }} />
-        <Tooltip title="Save">
-          <IconButton aria-label={`Save ${clip.name}`} aria-haspopup="menu" size="small" onClick={(event) => setMenuAnchor(event.currentTarget)}>
-            <DownloadRoundedIcon sx={{ fontSize: 18 }} />
-          </IconButton>
+        <Tooltip title={converting ? `Saving as ${converting}…` : 'Save'}>
+          <span>
+            <IconButton
+              aria-label={`Save ${clip.name}`}
+              aria-haspopup="menu"
+              size="small"
+              disabled={Boolean(converting)}
+              onClick={(event) => setMenuAnchor(event.currentTarget)}
+            >
+              {converting ? <CircularProgress size={16} /> : <DownloadRoundedIcon sx={{ fontSize: 18 }} />}
+            </IconButton>
+          </span>
         </Tooltip>
       </Box>
       <Menu anchorEl={menuAnchor} open={Boolean(menuAnchor)} onClose={() => setMenuAnchor(null)}>
@@ -289,14 +304,15 @@ function GeneratedClip({ clip }: { clip: AttachmentRef }) {
           </ListItemIcon>
           <ListItemText primary="Save original" secondary={`${audioLabel(clip.mimeType)} · ${formatBytes(clip.size)}`} />
         </MenuItem>
-        {clip.mimeType !== 'audio/wav' && (
-          <MenuItem onClick={() => void saveAsWav()}>
+        <Divider />
+        {AUDIO_SAVE_OPTIONS.filter((option) => option.format !== original).map((option) => (
+          <MenuItem key={option.format} onClick={() => void saveAs(option)}>
             <ListItemIcon>
               <GraphicEqRoundedIcon fontSize="small" />
             </ListItemIcon>
-            <ListItemText primary="Save as WAV" secondary="Uncompressed, opens anywhere" />
+            <ListItemText primary={`Save as ${option.label}`} secondary={option.note} />
           </MenuItem>
-        )}
+        ))}
       </Menu>
       <StatusNote status={status} width={480} />
     </Box>

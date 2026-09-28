@@ -182,6 +182,9 @@ now sit behind its newer Interactions API rather than `generateContent`.
       a dedicated pane.
 - [x] **H5. Gemini TTS directly** (M). Through the Interactions API with `GEMINI_API_KEY`, including style
       notes and two-speaker scripts (`Name: line`). Two speakers are only sent this way, not through OpenRouter.
+- [x] **H7. Save speech as MP3, AAC or AC-3** (S). Encoded in the browser with Mediabunny's WASM encoders,
+      loaded on first use. AC-3 is written as a plain `.ac3` stream of its self-contained frames. An ffmpeg
+      path on the server was the alternative, but it would need ffmpeg installed for any of it to work.
 - [ ] **H6. Speech costs** (S, later). None of the speech endpoints report a price, so speech replies and Read
       aloud show nothing on the Usage page. Characters times a per-model list price would do.
 

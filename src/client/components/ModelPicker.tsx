@@ -5,6 +5,7 @@ import StarRoundedIcon from '@mui/icons-material/StarRounded';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
+import Chip from '@mui/material/Chip';
 import IconButton from '@mui/material/IconButton';
 import InputBase from '@mui/material/InputBase';
 import Popover from '@mui/material/Popover';
@@ -29,6 +30,44 @@ interface Row {
 
 const MAX_ROWS_PER_PROVIDER = 150;
 
+/** What a model answers with. Text covers every chat model. */
+type KindFilter = 'all' | 'text' | 'image' | 'speech';
+const KIND_FILTERS: { value: KindFilter; label: string }[] = [
+  { value: 'all', label: 'Any type' },
+  { value: 'text', label: 'Text' },
+  { value: 'image', label: 'Image' },
+  { value: 'speech', label: 'Speech' },
+];
+
+const FILTER_KEY = 'switchbox.modelPicker.filters';
+
+interface Filters {
+  provider: ProviderId | 'all';
+  kind: KindFilter;
+}
+
+/** The last filters used, remembered in this browser only. */
+function loadFilters(): Filters {
+  try {
+    const saved = JSON.parse(localStorage.getItem(FILTER_KEY) ?? 'null') as Partial<Filters> | null;
+    return { provider: saved?.provider ?? 'all', kind: saved?.kind ?? 'all' };
+  } catch {
+    return { provider: 'all', kind: 'all' };
+  }
+}
+
+function saveFilters(filters: Filters): void {
+  try {
+    localStorage.setItem(FILTER_KEY, JSON.stringify(filters));
+  } catch {
+    // Storage can be unavailable; the filter still works for this visit.
+  }
+}
+
+function kindOf(model: ModelInfo): Exclude<KindFilter, 'all'> {
+  return model.kind ?? 'text';
+}
+
 export interface ModelPickerProps {
   anchorEl: HTMLElement | null;
   open: boolean;
@@ -46,6 +85,13 @@ export function ModelPicker({ anchorEl, open, onClose, onSelect, selected }: Mod
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(query);
   const [active, setActive] = useState(0);
+  const [filters, setFiltersState] = useState<Filters>(loadFilters);
+
+  function setFilters(next: Filters): void {
+    setFiltersState(next);
+    saveFilters(next);
+    setActive(0);
+  }
 
   const favorites = useMemo(() => settings.data?.favorites ?? [], [settings.data]);
   const favoriteKeys = useMemo(() => new Set(favorites.map(modelKey)), [favorites]);
@@ -54,10 +100,26 @@ export function ModelPicker({ anchorEl, open, onClose, onSelect, selected }: Mod
     [providers.data],
   );
 
+  // A remembered provider that has since been turned off shows everything instead of nothing.
+  const providerFilter = filters.provider !== 'all' && readyProviders.includes(filters.provider) ? filters.provider : 'all';
+  const shownProviders = useMemo(() => (providerFilter === 'all' ? readyProviders : [providerFilter]), [providerFilter, readyProviders]);
+
+  /** Models per provider for the chips, counting the type filter but not the provider one. */
+  const counts = useMemo(() => {
+    const byProvider = new Map<ProviderId, number>();
+    for (const model of models.data?.models ?? []) {
+      if (filters.kind !== 'all' && kindOf(model) !== filters.kind) continue;
+      byProvider.set(model.provider, (byProvider.get(model.provider) ?? 0) + 1);
+    }
+    return byProvider;
+  }, [models.data, filters.kind]);
+
   const rows = useMemo<Row[]>(() => {
     const all = models.data?.models ?? [];
     const terms = deferredQuery.toLowerCase().split(/\s+/).filter(Boolean);
     const matches = (model: ModelInfo) => {
+      if (!shownProviders.includes(model.provider)) return false;
+      if (filters.kind !== 'all' && kindOf(model) !== filters.kind) return false;
       const haystack = `${model.name} ${model.model} ${PROVIDER_LABELS[model.provider]}`.toLowerCase();
       return terms.every((term) => haystack.includes(term));
     };
@@ -70,7 +132,7 @@ export function ModelPicker({ anchorEl, open, onClose, onSelect, selected }: Mod
       for (const model of starred) result.push({ kind: 'model', key: `f-${modelKey(model)}`, label: model.name, model });
     }
 
-    for (const provider of readyProviders) {
+    for (const provider of shownProviders) {
       const own = filtered.filter((model) => model.provider === provider);
       if (own.length === 0) continue;
       result.push({ kind: 'header', key: `h-${provider}`, label: PROVIDER_LABELS[provider] });
@@ -82,12 +144,12 @@ export function ModelPicker({ anchorEl, open, onClose, onSelect, selected }: Mod
     const typed = query.trim();
     if (typed && !all.some((model) => model.model === typed)) {
       result.push({ kind: 'header', key: 'h-direct-id', label: 'Use a model id directly' });
-      for (const provider of readyProviders) {
+      for (const provider of shownProviders) {
         result.push({ kind: 'custom', key: `direct-${provider}`, label: typed, provider });
       }
     }
     return result;
-  }, [models.data, deferredQuery, query, favoriteKeys, readyProviders]);
+  }, [models.data, deferredQuery, query, favoriteKeys, shownProviders, filters.kind]);
 
   const selectable = rows.filter((row) => row.kind !== 'header');
 
@@ -155,6 +217,50 @@ export function ModelPicker({ anchorEl, open, onClose, onSelect, selected }: Mod
         </Tooltip>
       </Box>
 
+      {readyProviders.length > 0 && (
+        <Box sx={{ px: 1.25, pt: 1, pb: 0.75, borderBottom: '1px solid var(--sb-border)', display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+          <Box role="group" aria-label="Filter by provider" sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+            <Chip
+              size="small"
+              label="All providers"
+              variant={providerFilter === 'all' ? 'filled' : 'outlined'}
+              color={providerFilter === 'all' ? 'primary' : 'default'}
+              aria-pressed={providerFilter === 'all'}
+              onClick={() => setFilters({ ...filters, provider: 'all' })}
+            />
+            {readyProviders.map((provider) => (
+              <Chip
+                key={provider}
+                size="small"
+                icon={
+                  <Box component="span" aria-hidden sx={{ display: 'flex' }}>
+                    <ProviderMark provider={provider} size={16} />
+                  </Box>
+                }
+                label={`${PROVIDER_LABELS[provider]} ${counts.get(provider) ?? 0}`}
+                variant={providerFilter === provider ? 'filled' : 'outlined'}
+                color={providerFilter === provider ? 'primary' : 'default'}
+                aria-pressed={providerFilter === provider}
+                onClick={() => setFilters({ ...filters, provider: providerFilter === provider ? 'all' : provider })}
+              />
+            ))}
+          </Box>
+          <Box role="group" aria-label="Filter by type" sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+            {KIND_FILTERS.map((option) => (
+              <Chip
+                key={option.value}
+                size="small"
+                label={option.label}
+                variant={filters.kind === option.value ? 'filled' : 'outlined'}
+                color={filters.kind === option.value ? 'primary' : 'default'}
+                aria-pressed={filters.kind === option.value}
+                onClick={() => setFilters({ ...filters, kind: option.value })}
+              />
+            ))}
+          </Box>
+        </Box>
+      )}
+
       {(models.data?.errors ?? []).map((error) => (
         <Alert key={error.provider} severity="warning" sx={{ m: 1, py: 0, fontSize: '0.75rem' }}>
           {PROVIDER_LABELS[error.provider]}: {error.error}
@@ -178,7 +284,8 @@ export function ModelPicker({ anchorEl, open, onClose, onSelect, selected }: Mod
 
         {!models.isLoading && readyProviders.length > 0 && selectable.length === 0 && (
           <Typography variant="body2" color="text.secondary" sx={{ p: 2.5, textAlign: 'center' }}>
-            No models match “{query}”.
+            {query ? `No models match “${query}”` : 'No models match'}
+            {providerFilter !== 'all' || filters.kind !== 'all' ? ' with these filters' : ''}.
           </Typography>
         )}
 

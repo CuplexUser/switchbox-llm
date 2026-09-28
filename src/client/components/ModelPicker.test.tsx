@@ -6,8 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ModelInfo, ModelRef } from '../../shared/types.ts';
 import { ModelPicker } from './ModelPicker.tsx';
 
-function model(provider: ModelInfo['provider'], id: string, name: string): ModelInfo {
-  return { provider, model: id, name } as ModelInfo;
+function model(provider: ModelInfo['provider'], id: string, name: string, kind?: ModelInfo['kind']): ModelInfo {
+  return (kind ? { provider, model: id, name, kind } : { provider, model: id, name }) as ModelInfo;
 }
 
 const RESPONSES: Record<string, unknown> = {
@@ -41,8 +41,24 @@ function renderPicker(onSelect: (ref: ModelRef) => void) {
 /** Each option's main line, without the provider badge or the id under it. */
 const optionNames = () => screen.getAllByRole('option').map((option) => option.querySelector('p')?.textContent ?? '');
 
+/** A Storage kept in memory, since this environment has no localStorage of its own. */
+function memoryStorage(): Storage {
+  const items = new Map<string, string>();
+  return {
+    get length() {
+      return items.size;
+    },
+    clear: () => items.clear(),
+    getItem: (key) => items.get(key) ?? null,
+    key: (index) => [...items.keys()][index] ?? null,
+    removeItem: (key) => void items.delete(key),
+    setItem: (key, value) => void items.set(key, String(value)),
+  };
+}
+
 beforeEach(() => {
   requests = [];
+  vi.stubGlobal('localStorage', memoryStorage());
   vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
     requests.push({ url, init });
     const body = RESPONSES[url] ?? {};
@@ -90,6 +106,54 @@ describe('ModelPicker', () => {
     const offer = await screen.findByText('Use “brand-new-model” on Anthropic');
     fireEvent.click(offer);
     expect(onSelect).toHaveBeenCalledWith({ provider: 'anthropic', model: 'brand-new-model' });
+  });
+
+  it('narrows the list to one provider and one type, and remembers the choice', async () => {
+    RESPONSES['/api/models'] = {
+      models: [
+        model('openrouter', 'vendor/alpha', 'Alpha'),
+        model('openrouter', 'google/banana', 'Banana', 'image'),
+        model('openrouter', 'google/voice-tts', 'Voice OR', 'speech'),
+        model('anthropic', 'claude-x', 'Claude X'),
+        model('google', 'gemini-tts', 'Voice G', 'speech'),
+      ],
+      errors: [],
+    };
+    RESPONSES['/api/providers'] = [
+      { id: 'openrouter', ready: true },
+      { id: 'anthropic', ready: true },
+      { id: 'google', ready: true },
+    ];
+    try {
+      renderPicker(() => undefined);
+      await screen.findByText('Alpha');
+
+      fireEvent.click(screen.getByRole('button', { name: 'Speech' }));
+      await vi.waitFor(() => expect(optionNames()).toEqual(['Voice OR', 'Voice G']));
+      // Counts follow the type filter.
+      expect(screen.getByRole('button', { name: 'Google 1' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Anthropic 0' })).toBeTruthy();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Google 1' }));
+      await vi.waitFor(() => expect(optionNames()).toEqual(['Voice G']));
+      fireEvent.change(screen.getByLabelText('Search models'), { target: { value: 'new-voice' } });
+      await vi.waitFor(() => expect(optionNames()).toEqual(['Use “new-voice” on Google']));
+      expect(JSON.parse(localStorage.getItem('switchbox.modelPicker.filters') ?? '{}')).toEqual({ provider: 'google', kind: 'speech' });
+
+      // Opened again, it starts where it was left.
+      cleanup();
+      renderPicker(() => undefined);
+      await vi.waitFor(() => expect(optionNames()).toEqual(['Voice G']));
+    } finally {
+      RESPONSES['/api/models'] = {
+        models: [model('openrouter', 'vendor/alpha', 'Alpha'), model('openrouter', 'vendor/beta', 'Beta'), model('anthropic', 'claude-x', 'Claude X')],
+        errors: [],
+      };
+      RESPONSES['/api/providers'] = [
+        { id: 'openrouter', ready: true },
+        { id: 'anthropic', ready: true },
+      ];
+    }
   });
 
   it('saves a new favorite', async () => {

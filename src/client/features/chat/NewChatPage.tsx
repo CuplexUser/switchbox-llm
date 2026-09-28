@@ -1,5 +1,6 @@
 import AddRoundedIcon from '@mui/icons-material/AddRounded';
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
+import TuneRoundedIcon from '@mui/icons-material/TuneRounded';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
@@ -10,10 +11,11 @@ import MenuItem from '@mui/material/MenuItem';
 import Skeleton from '@mui/material/Skeleton';
 import Switch from '@mui/material/Switch';
 import TextField from '@mui/material/TextField';
+import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { useState } from 'react';
 import { Link as RouterLink, useNavigate } from 'react-router';
-import { MAX_PANES, modelKey } from '../../../shared/defaults.ts';
+import { isImageModel, isSpeechModel, MAX_PANES, modelKey } from '../../../shared/defaults.ts';
 import { PROVIDER_LABELS, type AppSettings, type AttachmentRef, type ModelRef } from '../../../shared/types.ts';
 import {
   useCreateConversation,
@@ -28,6 +30,14 @@ import { ProviderMark } from '../../components/ProviderMark.tsx';
 import { useChatStore } from '../../stores/chat.ts';
 import { CHANNEL_NAMES, channelSoftVar, channelVar } from '../../theme/theme.ts';
 import { Composer } from './Composer.tsx';
+import { NewPaneSettingsDialog, setupSummary, type PaneSetup } from './PaneSettingsDialog.tsx';
+
+/** A model chosen for the new chat, with any settings made for it before the chat starts. */
+type Slot = ModelRef & PaneSetup;
+
+function toSlot(ref: ModelRef): Slot {
+  return { provider: ref.provider, model: ref.model, systemPrompt: null, params: {} };
+}
 
 export function NewChatPage() {
   const settings = useSettings();
@@ -51,9 +61,10 @@ function NewChatForm({ settings }: { settings: AppSettings }) {
   const navigate = useNavigate();
 
   // Start from the saved default models, else the first two favorites.
-  const [slots, setSlots] = useState<ModelRef[]>(() =>
-    settings.defaults.panes.length > 0 ? settings.defaults.panes.slice(0, MAX_PANES) : settings.favorites.slice(0, 2),
+  const [slots, setSlots] = useState<Slot[]>(() =>
+    (settings.defaults.panes.length > 0 ? settings.defaults.panes.slice(0, MAX_PANES) : settings.favorites.slice(0, 2)).map(toSlot),
   );
+  const [editing, setEditing] = useState<number | null>(null);
   const [persist, setPersist] = useState(settings.general.persistByDefault);
   const [useMemory, setUseMemory] = useState(settings.memory.useByDefault);
   const [webAccess, setWebAccess] = useState(settings.web.useByDefault);
@@ -72,8 +83,20 @@ function NewChatForm({ settings }: { settings: AppSettings }) {
     current.length === savedDefaults.length &&
     current.every((slot, index) => savedDefaults[index] && modelKey(slot) === modelKey(savedDefaults[index]));
 
+  function listed(ref: ModelRef) {
+    return models.data?.models.find((model) => modelKey(model) === modelKey(ref));
+  }
+
   function modelName(ref: ModelRef): string {
-    return models.data?.models.find((model) => modelKey(model) === modelKey(ref))?.name ?? ref.model;
+    return listed(ref)?.name ?? ref.model;
+  }
+
+  /** The provider, what kind of model it is, and anything set for it here. */
+  function slotCaption(slot: Slot): string {
+    const info = listed(slot);
+    const kind = isSpeechModel(slot, info) ? 'Speech' : isImageModel(slot, info) ? 'Image' : null;
+    const profile = slot.systemPromptId === undefined ? null : (prompts.data?.find((prompt) => prompt.id === slot.systemPromptId)?.name ?? 'No profile');
+    return [PROVIDER_LABELS[slot.provider], kind, profile, setupSummary(slot)].filter(Boolean).join(' · ');
   }
 
   function start(text: string, attachments: AttachmentRef[]): void {
@@ -83,7 +106,13 @@ function NewChatForm({ settings }: { settings: AppSettings }) {
         useMemory,
         webAccess,
         workspace,
-        panes: current.map((slot) => ({ ...slot, systemPromptId: effectivePromptId || null })),
+        panes: current.map((slot) => ({
+          provider: slot.provider,
+          model: slot.model,
+          systemPromptId: slot.systemPromptId === undefined ? effectivePromptId || null : slot.systemPromptId,
+          systemPrompt: slot.systemPrompt,
+          params: slot.params,
+        })),
       },
       {
         onSuccess: (conversation) => {
@@ -171,16 +200,26 @@ function NewChatForm({ settings }: { settings: AppSettings }) {
                   <Typography variant="body2" noWrap sx={{ fontWeight: 600 }}>
                     {modelName(slot)}
                   </Typography>
-                  <Typography variant="caption" noWrap component="div" sx={{ color: 'var(--sb-text-faint)' }}>
-                    {PROVIDER_LABELS[slot.provider]}
+                  <Typography variant="caption" noWrap component="div" title={slotCaption(slot)} sx={{ color: 'var(--sb-text-faint)' }}>
+                    {slotCaption(slot)}
                   </Typography>
                 </Box>
               </ButtonBase>
+              <Tooltip title="Settings for this pane">
+                <IconButton
+                  size="small"
+                  aria-label={`Settings for ${modelName(slot)}`}
+                  onClick={() => setEditing(index)}
+                  sx={{ color: setupSummary(slot) || slot.systemPromptId !== undefined ? channelVar(index) : undefined }}
+                >
+                  <TuneRoundedIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
               <IconButton
                 size="small"
                 aria-label={`Remove ${modelName(slot)}`}
                 onClick={() => setSlots(current.filter((_, position) => position !== index))}
-                sx={{ mr: 0.75 }}
+                sx={{ mr: 0.75, ml: -0.25 }}
               >
                 <CloseRoundedIcon fontSize="small" />
               </IconButton>
@@ -247,7 +286,7 @@ function NewChatForm({ settings }: { settings: AppSettings }) {
             <Button
               size="small"
               color="inherit"
-              onClick={() => updateSettings.mutate({ section: 'defaults', value: { panes: current } })}
+              onClick={() => updateSettings.mutate({ section: 'defaults', value: { panes: current.map(({ provider, model }) => ({ provider, model })) } })}
               sx={{ color: 'var(--sb-text-muted)' }}
             >
               Make these the default models
@@ -274,8 +313,20 @@ function NewChatForm({ settings }: { settings: AppSettings }) {
         onSelect={(ref) => {
           if (!picker) return;
           const next = [...current];
-          next[picker.slot] = ref;
+          // A new model keeps the settings made for the slot; ones it doesn't use are ignored.
+          next[picker.slot] = { ...(current[picker.slot] ?? toSlot(ref)), provider: ref.provider, model: ref.model };
           setSlots(next);
+        }}
+      />
+      <NewPaneSettingsDialog
+        open={editing !== null}
+        model={editing === null ? null : (current[editing] ?? null)}
+        setup={editing === null ? null : (current[editing] ?? null)}
+        chatProfileName={prompts.data?.find((prompt) => prompt.id === effectivePromptId)?.name ?? 'none'}
+        onClose={() => setEditing(null)}
+        onSave={(setup) => {
+          if (editing === null) return;
+          setSlots(current.map((slot, index) => (index === editing ? { provider: slot.provider, model: slot.model, ...setup } : slot)));
         }}
       />
     </Box>
